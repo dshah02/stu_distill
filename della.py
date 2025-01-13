@@ -6,9 +6,29 @@ from stu import STU
 import time
 import random
 
-save_folder = "lds_train_results2" 
+save_folder = "lds_train_results3" 
 
 uid = random.randint(1000,9999)
+
+def exponential_decay_init(size, lam=5.0):
+    """
+    Samples from an exponential distribution with rate lam, 
+    then clips at 1, does (1 - clipped_value),
+    and finally multiplies by ±1 with probability 1/2.
+    """
+    # 1) Sample uniform [0,1], convert to exponential
+    u = torch.rand(size)
+    x = -1.0 / lam * torch.log(1 - u)  # Exponential(λ = lam)
+
+    # 2) Clip at 1
+    x = torch.clamp(x, max=1.0)
+
+    # 3) Subtract from 1 (to be near 1 for small x)
+    x = 1.0 - x  # Now we have distribution mostly near 1 for large lam
+
+    # 4) Multiply by ±1 with prob 1/2
+    sign = torch.sign(torch.randn(size))
+    return x * sign
 
 def compute_ar_x_preds(w: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     d_out, d_in, k = w.shape
@@ -37,11 +57,14 @@ class LDS(nn.Module):
         self.output_dim = output_dim
         self.kx = kx
         self.h0 = nn.Parameter(torch.randn(state_dim))
-        init_A = torch.randn(state_dim)
-        self.A = nn.Parameter(init_A / torch.max(torch.abs(init_A)))
+        # init_A = torch.randn(state_dim)
+        # self.A = nn.Parameter(init_A / torch.max(torch.abs(init_A)))
+
+        # self.A = nn.Parameter((torch.rand(state_dim) * 0.2 + 0.8) * torch.sign(torch.randn(state_dim)))
+        self.A = nn.Parameter(exponential_decay_init([state_dim], lam = 15))
         self.B = nn.Parameter(torch.randn(input_dim, state_dim) / input_dim)
         self.C = nn.Parameter(torch.randn(state_dim, output_dim) / state_dim)
-        self.M = nn.Parameter(torch.randn(input_dim, output_dim, kx) / output_dim)
+        self.M = nn.Parameter(torch.randn(output_dim, input_dim, kx) / (output_dim))
 
     def forward(self, inputs):
         device = inputs.device
@@ -63,7 +86,6 @@ class LDS(nn.Module):
         mse_loss = nn.MSELoss()
         outputs = self(inputs)
         return mse_loss(outputs, targets)
-
 
 
 # Command-line argument parsing
@@ -96,6 +118,8 @@ lds_loss_values = []
 last_save_time = time.time()
 save_interval = 20 * 60  # 20 minutes in seconds
 
+best_loss = float('inf')
+
 for epoch in range(lds_epochs):
     inputs = torch.randn(args.batch_size, args.seq_len, 768).to(device).to(torch.bfloat16)
     stu_outputs = stu_layer_full(inputs).to(device)
@@ -114,6 +138,16 @@ for epoch in range(lds_epochs):
         print(f"Epoch {epoch}, Loss: {loss.item()}")
 
     # Save the model every 20 minutes
+
+    if loss.item() < best_loss: #do early stopping later
+        best_loss = loss.item()
+        torch.save({
+            "lds_state_dict": lds.state_dict(),
+            "lds_optimizer_state_dict": optimizer.state_dict(),
+            "best_loss": best_loss
+        }, f"./{save_folder}/{uid}_{args.layer_i}_{args.state_dim}_best_lds_model_and_optimizer.pt")
+        print(f"New best model saved with loss {best_loss:.6f} at epoch {epoch}.")
+
     if time.time() - last_save_time >= save_interval:
         torch.save({
             "lds_state_dict": lds.state_dict(),
