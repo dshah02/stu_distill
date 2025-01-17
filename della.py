@@ -23,7 +23,7 @@ def exponential_decay_init(size, lam=5.0):
     # 2) Clip at 1
     x = torch.clamp(x, max=1.0)
 
-    # 3) Subtract from 1 (to be near 1 for small x)
+    # 3) Subtract from 1 (to be nea.r 1 for small x)
     x = 1.0 - x  # Now we have distribution mostly near 1 for large lam
 
     # 4) Multiply by ±1 with prob 1/2
