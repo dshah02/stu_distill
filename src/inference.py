@@ -6,7 +6,7 @@ import logging
 import json
 from time import time
 from safetensors import safe_open
-from model import FlashSTU
+from src import FlashSTU
 from config import FlashSTUConfig
 
 # Setup device
