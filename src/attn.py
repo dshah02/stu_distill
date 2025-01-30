@@ -5,11 +5,11 @@ import torch.nn.functional as F
 class Attention(nn.Module):
     def __init__(self, config):
         super(Attention, self).__init__()
-        assert torch.cuda.is_available(), "CUDA is required."
+        # assert torch.cuda.is_available(), "CUDA is required."
         assert config.n_embd % config.n_heads == 0
         self.n_heads = config.n_heads
 
-        self.device = torch.device("cuda")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.bsz = config.bsz
         self.c_attn = nn.Linear(
             config.n_embd, 3 * config.n_embd, bias=config.bias, dtype=config.torch_dtype
