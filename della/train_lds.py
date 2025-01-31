@@ -10,7 +10,6 @@ save_folder = "lds_train_results"
 
 uid = random.randint(1000,9999)
 
-
 # Command-line argument parsing
 parser = argparse.ArgumentParser(description="Train LDS model")
 parser.add_argument("--layer_i", type=int, required=True, help="Layer index")
