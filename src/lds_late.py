@@ -3,21 +3,22 @@ from torch import nn
 
 from lds_utils import exponential_decay_init, compute_ar_x_preds
 
-class LDS(nn.Module):
-    def __init__(self, state_dim, input_dim, output_dim, kx=10, lam = 5):
-        super(LDS, self).__init__()
+class LDS_Late(nn.Module):
+    def __init__(self, state_dim, input_dim, output_dim, kx=10):
+        super(LDS_Late, self).__init__()
         self.state_dim = state_dim
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.kx = kx
         self.h0 = nn.Parameter(torch.randn(state_dim))
-        
-        self.A = nn.Parameter(exponential_decay_init([state_dim], lam = lam))
+    
+        self.A = nn.Parameter(exponential_decay_init([state_dim], lam = 5))
         self.B = nn.Parameter(torch.randn(input_dim, state_dim) / input_dim)
         self.C = nn.Parameter(torch.randn(state_dim, output_dim) / state_dim)
-        self.M = nn.Parameter(torch.randn(output_dim, input_dim, kx) / (input_dim)) #input_dim or output_dim to normalize??
+        self.M = nn.Parameter(torch.randn(output_dim, input_dim, kx) / (output_dim))
 
     def forward(self, inputs):
+        
         device = inputs.device
         bsz, seq_len, _ = inputs.shape
         h_t = self.h0.expand(bsz, self.state_dim).to(device)
@@ -30,8 +31,11 @@ class LDS(nn.Module):
         all_h_t = torch.cat(all_h_t, dim=1)
         lds_out = torch.matmul(all_h_t, self.C)
 
+        new_lds_out = torch.zeros_like(lds_out)
+        new_lds_out[:, :-self.kx, :] = lds_out[:, self.kx:, :] #shifting by kx
         ar = compute_ar_x_preds(self.M, inputs)
-        return lds_out + ar
+
+        return ar + new_lds_out
 
     def compute_loss(self, inputs, targets):
         mse_loss = nn.MSELoss()
