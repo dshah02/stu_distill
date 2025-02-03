@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from lds import exponential_decay_init, compute_ar_x_preds #maybe move to utils
+from lds import exponential_decay_init, compute_ar_x_preds, compute_ar_x_preds_lr #maybe move to utils
 
 import math
 class LDS_LR(nn.Module):
@@ -39,11 +39,42 @@ class LDS_LR(nn.Module):
         lds_out = torch.matmul(all_h_t, self.C1)
         lds_out = torch.matmul(lds_out, self.C2)
 
-        ar = compute_ar_x_preds(self.M1, inputs)
-        ar = compute_ar_x_preds(self.M2, ar)
+        ar = compute_ar_x_preds_lr(self.M1, self.M2, inputs)
         return lds_out + ar
 
     def compute_loss(self, inputs, targets):
         mse_loss = nn.MSELoss()
         outputs = self(inputs)
         return mse_loss(outputs, targets)
+
+
+
+def init_lr_from_lds(lds, ldslr, rank=50):
+    with torch.no_grad():
+        ldslr.h0.copy_(lds.h0)
+        ldslr.A.copy_(lds.A)
+        
+        U, S, Vh = torch.linalg.svd(lds.B, full_matrices=False)
+        U_r = U[:, :rank]
+        S_r = S[:rank]
+        V_r = Vh[:rank, :]
+        ldslr.B1.copy_(U_r * torch.sqrt(S_r).unsqueeze(0))
+        ldslr.B2.copy_(torch.sqrt(S_r).unsqueeze(1) * V_r)
+        
+        U, S, Vh = torch.linalg.svd(lds.C, full_matrices=False)
+        U_r = U[:, :rank]
+        S_r = S[:rank]
+        V_r = Vh[:rank, :]
+        ldslr.C1.copy_(U_r * torch.sqrt(S_r).unsqueeze(0))
+        ldslr.C2.copy_(torch.sqrt(S_r).unsqueeze(1) * V_r)
+        
+        kx = lds.kx
+        for i in range(kx):
+            Mi = lds.M[:, :, i]
+            U, S, Vh = torch.linalg.svd(Mi, full_matrices=False)
+            U_r = U[:, :rank]
+            S_r = S[:rank]
+            V_r = Vh[:rank, :]
+            ldslr.M2[:, :, i].copy_(U_r * torch.sqrt(S_r).unsqueeze(0))
+            ldslr.M1[:, :, i].copy_(torch.sqrt(S_r).unsqueeze(1) * V_r)
+
