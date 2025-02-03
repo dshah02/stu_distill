@@ -1,29 +1,35 @@
 import torch
 from torch import nn
-
-from lds import exponential_decay_init, compute_ar_x_preds, compute_ar_x_preds_lr #maybe move to utils
-
 import math
+from lds_utils import exponential_decay_init, compute_ar_x_preds_lr
+
 class LDS_LR(nn.Module):
-    def __init__(self, state_dim, input_dim, output_dim, kx=5, rank = 50, lam = 1):
+    def __init__(self, state_dim, input_dim, output_dim, kx=5, rank = 50, ranks = None, lam = 1):
         super(LDS_LR, self).__init__()
+
+        if ranks != None:
+            rank_b, rank_c, rank_m = ranks
+        else:
+            rank_b, rank_c, rank_m = rank, rank, rank
+            
         self.state_dim = state_dim
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.kx = kx
         self.h0 = nn.Parameter(torch.randn(state_dim))
- 
+        
         self.A = nn.Parameter(exponential_decay_init([state_dim], lam = lam))
 
-        self.B1 = nn.Parameter(torch.randn(input_dim, rank) / input_dim) #each of these ranks could be different
-        self.B2   = nn.Parameter(torch.randn(rank, state_dim) / math.sqrt(rank))
+        self.B1 = nn.Parameter(torch.randn(input_dim, rank_b) / input_dim) #each of these ranks could be different
+        self.B2   = nn.Parameter(torch.randn(rank_b, state_dim) / math.sqrt(rank_b))
 
-        self.C1 = nn.Parameter(torch.randn(state_dim, rank) / state_dim)
-        self.C2   = nn.Parameter(torch.randn(rank, output_dim) / math.sqrt(rank))
+        self.C1 = nn.Parameter(torch.randn(state_dim, rank_c) / state_dim)
+        self.C2   = nn.Parameter(torch.randn(rank_c, output_dim) / math.sqrt(rank_c))
 
-        self.M2 = nn.Parameter(torch.randn(output_dim, rank, kx) / output_dim)
-        self.M1   = nn.Parameter(torch.randn(rank, input_dim, kx) / math.sqrt(rank))
+        self.M2 = nn.Parameter(torch.randn(output_dim, rank_m, kx) / output_dim)
+        self.M1   = nn.Parameter(torch.randn(rank_m, input_dim, kx) / math.sqrt(rank_m))
     
+
     def forward(self, inputs):
         device = inputs.device
         bsz, seq_len, _ = inputs.shape
@@ -47,34 +53,41 @@ class LDS_LR(nn.Module):
         outputs = self(inputs)
         return mse_loss(outputs, targets)
 
+    @classmethod
+    def from_lds(cls, lds, rank= 50, ranks = None):
+        ldslr = cls(lds.state_dim, lds.input_dim, lds.output_dim, lds.kx, rank = rank, ranks = ranks)
 
-
-def init_lr_from_lds(lds, ldslr, rank=50):
-    with torch.no_grad():
-        ldslr.h0.copy_(lds.h0)
-        ldslr.A.copy_(lds.A)
+        if ranks != None:
+            rank_b, rank_c, rank_m = ranks
+        else:
+            rank_b, rank_c, rank_m = rank, rank, rank
+            
         
-        U, S, Vh = torch.linalg.svd(lds.B, full_matrices=False)
-        U_r = U[:, :rank]
-        S_r = S[:rank]
-        V_r = Vh[:rank, :]
-        ldslr.B1.copy_(U_r * torch.sqrt(S_r).unsqueeze(0))
-        ldslr.B2.copy_(torch.sqrt(S_r).unsqueeze(1) * V_r)
-        
-        U, S, Vh = torch.linalg.svd(lds.C, full_matrices=False)
-        U_r = U[:, :rank]
-        S_r = S[:rank]
-        V_r = Vh[:rank, :]
-        ldslr.C1.copy_(U_r * torch.sqrt(S_r).unsqueeze(0))
-        ldslr.C2.copy_(torch.sqrt(S_r).unsqueeze(1) * V_r)
-        
-        kx = lds.kx
-        for i in range(kx):
-            Mi = lds.M[:, :, i]
-            U, S, Vh = torch.linalg.svd(Mi, full_matrices=False)
-            U_r = U[:, :rank]
-            S_r = S[:rank]
-            V_r = Vh[:rank, :]
-            ldslr.M2[:, :, i].copy_(U_r * torch.sqrt(S_r).unsqueeze(0))
-            ldslr.M1[:, :, i].copy_(torch.sqrt(S_r).unsqueeze(1) * V_r)
-
+        with torch.no_grad():
+            ldslr.h0.copy_(lds.h0)
+            ldslr.A.copy_(lds.A)
+            
+            U, S, Vh = torch.linalg.svd(lds.B, full_matrices=False)
+            U_r = U[:, :rank_b]
+            S_r = S[:rank_b]
+            V_r = Vh[:rank_b, :]
+            ldslr.B1.copy_(U_r * torch.sqrt(S_r).unsqueeze(0))
+            ldslr.B2.copy_(torch.sqrt(S_r).unsqueeze(1) * V_r)
+            
+            U, S, Vh = torch.linalg.svd(lds.C, full_matrices=False)
+            U_r = U[:, :rank_c]
+            S_r = S[:rank_c]
+            V_r = Vh[:rank_c, :]
+            ldslr.C1.copy_(U_r * torch.sqrt(S_r).unsqueeze(0))
+            ldslr.C2.copy_(torch.sqrt(S_r).unsqueeze(1) * V_r)
+            
+            kx = lds.kx
+            for i in range(kx):
+                Mi = lds.M[:, :, i]
+                U, S, Vh = torch.linalg.svd(Mi, full_matrices=False)
+                U_r = U[:, :rank_m]
+                S_r = S[:rank_m]
+                V_r = Vh[:rank_m, :]
+                ldslr.M2[:, :, i].copy_(U_r * torch.sqrt(S_r).unsqueeze(0))
+                ldslr.M1[:, :, i].copy_(torch.sqrt(S_r).unsqueeze(1) * V_r)
+        return ldslr

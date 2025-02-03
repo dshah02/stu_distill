@@ -3,8 +3,9 @@ from torch import nn
 
 from lds_utils import exponential_decay_init, compute_ar_x_preds
 
+#this doesn't work well
 class LDS_Late(nn.Module):
-    def __init__(self, state_dim, input_dim, output_dim, kx=10):
+    def __init__(self, state_dim, input_dim, output_dim, kx=10, lam = 5):
         super(LDS_Late, self).__init__()
         self.state_dim = state_dim
         self.input_dim = input_dim
@@ -12,7 +13,7 @@ class LDS_Late(nn.Module):
         self.kx = kx
         self.h0 = nn.Parameter(torch.randn(state_dim))
     
-        self.A = nn.Parameter(exponential_decay_init([state_dim], lam = 5))
+        self.A = nn.Parameter(exponential_decay_init([state_dim], lam = lam))
         self.B = nn.Parameter(torch.randn(input_dim, state_dim) / input_dim)
         self.C = nn.Parameter(torch.randn(state_dim, output_dim) / state_dim)
         self.M = nn.Parameter(torch.randn(output_dim, input_dim, kx) / (output_dim))
