@@ -8,7 +8,7 @@ def exponential_decay_init(size, lam=5.0):
     Then does (1 - value), and finally multiplies by ±1 with probability 1/2.
     """
     # 1) Sample uniform [0, 1 - exp(-lam)], convert to exponential
-    max_u = 1 - torch.exp(torch.tensor(-lam))
+    max_u = 1 - torch.exp(-torch.tensor(lam))
     u = torch.rand(size) * max_u
     x = -1.0 / lam * torch.log(1 - u)  # Exponential(λ = lam)
 
