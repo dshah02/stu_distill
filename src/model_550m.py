@@ -233,7 +233,7 @@ class STU(nn.Module):
             self.M_inputs = nn.Parameter(
                 torch.empty(self.d_in, self.d_out, dtype=config.torch_dtype)
             )
-            self.M_phi_plus = nn.Parameter(
+            self.M_filters = nn.Parameter(
                 torch.empty(self.K, self.d_in, dtype=config.torch_dtype)
             )
         else:
