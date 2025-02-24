@@ -42,3 +42,18 @@ class LDS(nn.Module):
         mse_loss = nn.MSELoss()
         outputs = self(inputs)
         return mse_loss(outputs, targets.to(self.dtype))
+    
+
+    def impulse(self, seq_len = 1024):
+      # Initialize output tensor
+      outputs = torch.zeros(seq_len)
+      
+      # For each position
+      for i in range(seq_len):
+          # Compute A^i
+          a_power = self.A ** i
+          
+          # Multiply C[:,0] * A^i * B[i]
+          outputs[i] = torch.sum(self.C[:,0] * a_power * self.B[0])
+          
+      return outputs
