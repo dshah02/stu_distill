@@ -44,16 +44,41 @@ class LDS(nn.Module):
         return mse_loss(outputs, targets.to(self.dtype))
     
 
-    def impulse(self, seq_len = 1024):
-      # Initialize output tensor
-      outputs = torch.zeros(seq_len)
-      
-      # For each position
-      for i in range(seq_len):
-          # Compute A^i
-          a_power = self.A ** i
-          
-          # Multiply C[:,0] * A^i * B[i]
-          outputs[i] = torch.sum(self.C[:,0] * a_power * self.B[0])
-          
-      return outputs
+    def impulse(self, seq_len=1024):
+        """
+        Compute the impulse response of the LDS for all input-output pairs.
+        
+        Args:
+            seq_len: Length of the impulse response
+            
+        Returns:
+            outputs: Tensor of shape (seq_len, d_out, d_in) containing impulse responses
+        """
+        # Get dimensions from the LDS matrices
+        d_h = self.A.shape[0]  # state dimension
+        d_in = self.B.shape[0]  # input dimension
+        d_out = self.C.shape[1]  # output dimension
+        
+        # Initialize output tensor
+        outputs = torch.zeros(seq_len, d_out, d_in, device=self.A.device)
+        
+        # For each time step
+        for t in range(seq_len):
+            # Compute A^t
+            a_power = self.A ** t  # Shape: (d_h,)
+            
+            # For each input dimension
+            for i in range(d_in):
+                # Get the i-th column of B (input to state mapping)
+                b_i = self.B[i, :]  # Shape: (d_h,)
+                
+                # Compute a_power * b_i (element-wise multiplication)
+                state_response = a_power * b_i  # Shape: (d_h,)
+                
+                # Compute C @ state_response for all outputs
+                output_response = self.C.T @ state_response  # Shape: (d_out,)
+                
+                # Store in the output tensor
+                outputs[t, :, i] = output_response
+        
+        return outputs
