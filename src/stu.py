@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 
 from convolve import convolve
-flash_convolve = lambda x: x
 
 try:
     from flashfftconv import FlashFFTConv
