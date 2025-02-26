@@ -15,5 +15,5 @@ module purge
 module load anaconda3/2024.6
 conda activate torch-env
 
-python train_by_impulse.py --seq_len 1024
+python lds_impulse_training.py --layer_i 2 --state_dim 2000 --seq_len 1024 --kx 10 --lr 0.0001 --epochs 5000 --output_dir results_layer2
 
