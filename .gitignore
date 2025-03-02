@@ -5,3 +5,4 @@ models/model_19073.safetensors
 experiments/lds_*.pth
 experiments/low_rank/lds_*.pth
 experiments/low_rank/lds_*.pth
+experiments/convex_hull/filter_2_impulse.pth
