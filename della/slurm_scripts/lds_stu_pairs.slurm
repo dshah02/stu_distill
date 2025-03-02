@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=layer_0_kx_10_state_10k
+#SBATCH --job-name=training_lds_stu_pairs
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -15,5 +15,5 @@ module purge
 module load anaconda3/2024.6
 conda activate torch-env
 
-python train_lds_stu_pairs.py
+python train_lds_stu_pairs.py --prefix 1 --steps 5000 --num_models 5000
 
