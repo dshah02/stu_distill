@@ -43,6 +43,39 @@ class LDS(nn.Module):
         outputs = self(inputs)
         return mse_loss(outputs, targets.to(self.dtype))
     
+    def generate_trajectory(self, us, h0=None):
+        """
+        Generate a trajectory of observations given a sequence of inputs.
+        
+        Args:
+            us: Tensor of shape (seq_len, input_dim) containing input sequence
+            h0: Optional initial hidden state. If None, use the model's h0
+            
+        Returns:
+            Tensor of shape (seq_len, output_dim) containing output sequence
+        """
+        _, d_u = us.shape
+        assert d_u == self.input_dim, (d_u, self.input_dim)
+        
+        if h0 is not None:
+            h_t = h0
+        else:
+            h_t = self.h0
+            
+        A = self.A.flatten()
+        obs = []
+        
+        for u in us:
+            h_t = A * h_t + (u @ self.B)
+            o_t = h_t @ self.C
+            obs.append(o_t)
+        
+        obs = torch.stack(obs, dim=0)
+        
+        if self.kx > 0:
+            obs += compute_ar_x_preds(self.M, us.unsqueeze(0))
+            
+        return obs
 
     def impulse(self, seq_len=1024):
         """

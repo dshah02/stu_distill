@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from convolve import convolve
 
@@ -25,6 +26,7 @@ class STU(nn.Module):
         self.d_out = config.n_embd
         self.use_hankel_L = config.use_hankel_L
         self.use_approx = config.use_approx
+        
         self.flash_fft = (
             FlashFFTConv(self.n, dtype=torch.bfloat16)
             if config.use_flash_fft and flash_fft_available
@@ -78,3 +80,8 @@ class STU(nn.Module):
 
         return spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus
 
+    def loss(self, inputs, targets):
+        pred = self.forward(inputs)
+        # print(pred, targets)
+        loss = F.mse_loss(pred, targets)
+        return  loss
