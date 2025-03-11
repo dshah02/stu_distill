@@ -6,8 +6,10 @@ from convolve import convolve
 
 try:
     from flashfftconv import FlashFFTConv
-
+    from convolve import flash_convolve
     flash_fft_available = True
+    if not torch.cuda.is_available():
+        flash_fft_available = False
 except ImportError as e:
     print(
         f"Unable to import FlashFFTConv: {e}. Falling back to PyTorch implementation."
