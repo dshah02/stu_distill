@@ -85,5 +85,5 @@ class STU(nn.Module):
     def loss(self, inputs, targets):
         pred = self.forward(inputs)
         # print(pred, targets)
-        loss = F.mse_loss(pred, targets)
+        
         return  loss

@@ -18,12 +18,15 @@ parser = argparse.ArgumentParser(description='Train STU models on random LDS sys
 parser.add_argument('--steps', type=int, default=5000, help='Number of training steps for each STU')
 parser.add_argument('--num_models', type=int, default=200, help='Number of LDS-STU pairs to train')
 parser.add_argument('--prefix', type=str, default='', help='Prefix for saved model filenames')
+parser.add_argument('--batch', type=int, default=1, help='Prefix for saved model filenames')
 args = parser.parse_args()
 
 try:
     from flashfftconv import FlashFFTConv
-
+    
     flash_fft_available = True
+    if not torch.cuda.is_available():
+        flash_fft_available = False
 except ImportError as e:
     print(
         f"Unable to import FlashFFTConv: {e}. Falling back to PyTorch implementation."
@@ -65,9 +68,10 @@ d_in = 1
 d_out = 1
 lds = random_LDS(d_h=d_h, d_o=d_out, d_u=d_in, lower_bound=0.9)
 print(lds.A)
+dtype = torch.bfloat16 if flash_fft_available else torch.float32
 
 use_hankel_L  = False
-phi = torch.tensor(np.load('spectral_filters.npy')).to(device).to(torch.float32)
+phi = torch.tensor(np.load('spectral_filters.npy')).to(device).to(dtype)
 seq_len, num_eigh = 8192, 24
 # phi= get_spectral_filters(seq_len = seq_len, K = num_eigh,  use_hankel_L= use_hankel_L, device  = device,  dtype = torch.float32)
 n = nearest_power_of_two(seq_len * 2 - 1, round_up=True)
@@ -76,7 +80,7 @@ class Config:
     def __init__(self):
         self.num_eigh = num_eigh
         self.use_hankel_L = use_hankel_L
-        self.torch_dtype = torch.float32
+        self.torch_dtype = dtype
         self.n_embd = 1  # d_in and d_out
         self.seq_len = seq_len
         self.k_u = 0
@@ -92,7 +96,8 @@ def train_stu(lds, steps, verbose=True):
 
     model.train()
 
-    bsz = 1
+    bsz = args.batch
+    steps = min(args.steps, 3 * steps//bsz)
 
     for step in range(steps):
         inputs = torch.randn(bsz * seq_len, d_in).to(device)
@@ -101,9 +106,11 @@ def train_stu(lds, steps, verbose=True):
         with torch.no_grad():
             targets = lds.generate_trajectory(inputs)
 
-        inputs = inputs.reshape(bsz, seq_len, d_in).to(device)
-        targets = targets.reshape(bsz, seq_len, d_out).to(device).type(inputs.dtype)
-        loss = model.loss(inputs, targets)
+        inputs = inputs.reshape(bsz, seq_len, d_in).to(device).type(dtype)
+        targets = targets.reshape(bsz, seq_len, d_out).to(device).type(dtype)
+        outputs = model.forward(inputs)
+        # print(outputs, targets)
+        loss = F.mse_loss(outputs, targets)
 
         optimizer.zero_grad()
         loss.backward()
@@ -123,10 +130,10 @@ for i in tqdm.tqdm(range(args.num_models)):
     # Fit STU to the LDS
     stu, loss = train_stu(new_lds, steps=args.steps, verbose=False)
     
-    # Extract positive and negative weights
-    pos_weights = stu.M_phi_plus[:, 0, 0].detach().cpu().numpy()  # Shape: [num_filters]
-    neg_weights = stu.M_phi_minus[:, 0, 0].detach().cpu().numpy()  # Shape: [num_filters]
-    auto_reg = stu.M.detach().cpu().numpy()
+    # # Extract positive and negative weights
+    # pos_weights = stu.M_phi_plus[:, 0, 0].detach().cpu().numpy()  # Shape: [num_filters]
+    # neg_weights = stu.M_phi_minus[:, 0, 0].detach().cpu().numpy()  # Shape: [num_filters]
+    # auto_reg = stu.M.detach().cpu().numpy()
     
     # Save the models after moving to CPU
     lds_cpu = new_lds.cpu()
@@ -135,3 +142,4 @@ for i in tqdm.tqdm(range(args.num_models)):
     # Save models with the specified prefix
     torch.save(lds_cpu, f'lds_trained/{args.prefix}lds_{i}.pth')
     torch.save(stu_cpu, f'lds_trained/{args.prefix}stu_{i}.pth')
+    print(loss)
