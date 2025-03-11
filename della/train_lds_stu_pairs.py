@@ -20,6 +20,17 @@ parser.add_argument('--num_models', type=int, default=200, help='Number of LDS-S
 parser.add_argument('--prefix', type=str, default='', help='Prefix for saved model filenames')
 args = parser.parse_args()
 
+try:
+    from flashfftconv import FlashFFTConv
+
+    flash_fft_available = True
+except ImportError as e:
+    print(
+        f"Unable to import FlashFFTConv: {e}. Falling back to PyTorch implementation."
+    )
+    flash_fft_available = False
+
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Import necessary modules
@@ -69,7 +80,7 @@ class Config:
         self.n_embd = 1  # d_in and d_out
         self.seq_len = seq_len
         self.k_u = 0
-        self.use_flash_fft = torch.cuda.is_available() #if cuda is available, flash_fft is available
+        self.use_flash_fft = flash_fft_available
         self.use_approx = False
 
 stu_config = Config()
@@ -91,7 +102,7 @@ def train_stu(lds, steps, verbose=True):
             targets = lds.generate_trajectory(inputs)
 
         inputs = inputs.reshape(bsz, seq_len, d_in).to(device)
-        targets = targets.reshape(bsz, seq_len, d_out).to(device)
+        targets = targets.reshape(bsz, seq_len, d_out).to(device).type(inputs.dtype)
         loss = model.loss(inputs, targets)
 
         optimizer.zero_grad()

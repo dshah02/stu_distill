@@ -1,0 +1,20 @@
+Parameter containing:
+tensor([-0.9178], device='cuda:0', requires_grad=True)
+  0%|          | 0/5000 [00:00<?, ?it/s]  0%|          | 0/5000 [00:01<?, ?it/s]
+Traceback (most recent call last):
+  File "/home/ds6237/stu_distill/della/train_lds_stu_pairs.py", line 124, in <module>
+    stu, loss = train_stu(new_lds, steps=args.steps, verbose=False)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ds6237/stu_distill/della/train_lds_stu_pairs.py", line 106, in train_stu
+    loss = model.loss(inputs, targets)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ds6237/stu_distill/src/stu.py", line 84, in loss
+    pred = self.forward(inputs)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/ds6237/stu_distill/src/stu.py", line 73, in forward
+    spectral_plus = torch.tensordot(
+                    ^^^^^^^^^^^^^^^^
+  File "/home/ds6237/.conda/envs/torch-env/lib/python3.12/site-packages/torch/functional.py", line 1355, in tensordot
+    return _VF.tensordot(a, b, dims_a, dims_b)  # type: ignore[attr-defined]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: both inputs should have same dtype
