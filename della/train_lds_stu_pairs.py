@@ -18,7 +18,8 @@ parser = argparse.ArgumentParser(description='Train STU models on random LDS sys
 parser.add_argument('--steps', type=int, default=5000, help='Number of training steps for each STU')
 parser.add_argument('--num_models', type=int, default=200, help='Number of LDS-STU pairs to train')
 parser.add_argument('--prefix', type=str, default='', help='Prefix for saved model filenames')
-parser.add_argument('--batch', type=int, default=1, help='Prefix for saved model filenames')
+parser.add_argument('--batch', type=int, default=1, help='batch size')
+parser.add_argument('--lb', type=float, default=0.95, help='lds lambda lower_bound')
 args = parser.parse_args()
 
 try:
@@ -66,8 +67,7 @@ def random_LDS(d_h: int, d_o: int, d_u: int, lower_bound: float):
 d_h = 1
 d_in = 1
 d_out = 1
-lds = random_LDS(d_h=d_h, d_o=d_out, d_u=d_in, lower_bound=0.9)
-print(lds.A)
+
 dtype = torch.bfloat16 if flash_fft_available else torch.float32
 
 use_hankel_L  = False
@@ -125,7 +125,7 @@ def train_stu(lds, steps, verbose=True):
 os.makedirs('lds_trained', exist_ok=True)
 
 for i in tqdm.tqdm(range(args.num_models)):
-    new_lds = random_LDS(d_h=d_h, d_o=d_out, d_u=d_in, lower_bound=0.95)
+    new_lds = random_LDS(d_h=d_h, d_o=d_out, d_u=d_in, lower_bound=args.lb)
     
     # Fit STU to the LDS
     stu, loss = train_stu(new_lds, steps=args.steps, verbose=False)
