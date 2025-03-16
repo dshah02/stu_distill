@@ -20,23 +20,65 @@ def exponential_decay_init(size, lam=5.0):
     return x * sign
     
 def compute_ar_x_preds(w: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-    d_out, d_in, k = w.shape
-    b, l, d_in_x = x.shape
-    assert d_in == d_in_x, (
-        f"Dimension mismatch: w.shape={w.shape}, x.shape={x.shape}"
-    )
+    """
+    Compute autoregressive predictions using weights w and inputs x.
+    
+    Args:
+        w: Tensor of shape (d_out, d_in, kx) containing AR weights
+        x: Tensor of shape (batch_size, seq_len, d_in) containing input sequences
+        
+    Returns:
+        Tensor of shape (batch_size, seq_len, d_out) containing AR predictions
+    """
+    batch_size, seq_len, d_in = x.shape
+    d_out, d_in_w, kx = w.shape
+    assert d_in == d_in_w, f"Dimension mismatch: w.shape={w.shape}, x.shape={x.shape}"
+    
+    # Initialize output tensor
+    ar_pred = torch.zeros(batch_size, seq_len, d_out, device=x.device)
+    
+    # For each time step
+    for t in range(seq_len):
+        # For each lag in the AR model
+        for k in range(min(t+1, kx)):  # Only use available past inputs
+            if t-k >= 0:  # Make sure we don't go out of bounds
+                # Get the input at time t-k for all batches
+                x_t_minus_k = x[:, t-k, :]  # Shape: [batch_size, d_in]
+                
+                # Get the weights for lag k
+                w_k = w[:, :, k]  # Shape: [d_out, d_in]
+                
+                # Compute the matrix multiplication using torch operations
+                ar_pred[:, t, :] += x_t_minus_k @ w_k.t()
+    
+    return ar_pred
 
-    o = torch.einsum("oik,bli->bklo", w, x)
-
-    for i in range(k):
-        o[:, i] = torch.roll(o[:, i], shifts=i, dims=1)
-
-    m = torch.triu(torch.ones(k, l, dtype=o.dtype, device=o.device))  # [k, l]
-    m = m.unsqueeze(-1).repeat(1, 1, d_out)  # [k, l, d_out]
-
-    ar_x_preds = torch.sum(o * m, dim=1)  # now shape is [b, l, d_out]
-
-    return ar_x_preds
+def compute_ar_x_preds_hard(w: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    """
+    Compute autoregressive predictions using weights w and inputs x.
+    
+    Args:
+        w: Tensor of shape (d_out, d_in, kx) containing AR weights
+        x: Tensor of shape (batch_size, seq_len, d_in) containing input sequences
+        
+    Returns:
+        Tensor of shape (batch_size, seq_len, d_out) containing AR predictions
+    """
+    batch_size, seq_len, d_in = x.shape
+    d_out, d_in_w, kx = w.shape
+    assert d_in == d_in_w, f"Dimension mismatch: w.shape={w.shape}, x.shape={x.shape}"
+    
+    # Initialize output tensor
+    ar_pred = torch.zeros(batch_size, seq_len, d_out, device=x.device).to(w.dtype)
+    
+    # For each time step
+    for t in range(seq_len):
+        # For each lag in the AR model
+        for k in range(min(t+1, kx)):  # Only use available past inputs
+            if t-k >= 0:  # Make sure we don't go out of bounds
+                ar_pred[:, t] += torch.einsum('oi,bi->bo', w[:, :, k], x[:, t-k])
+    
+    return ar_pred
 
 
 def compute_ar_x_preds_lr(w_down: torch.Tensor, w_up: torch.Tensor, x: torch.Tensor) -> torch.Tensor:

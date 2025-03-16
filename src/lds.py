@@ -113,5 +113,49 @@ class LDS(nn.Module):
                 
                 # Store in the output tensor
                 outputs[t, :, i] = output_response
-        
+        # Add the contribution from the direct input-to-output mapping (M matrix)
+        if self.kx > 0:
+            # For each time step
+            for t in range(self.kx):
+                outputs[t,:,:] += self.M[:,:, t]
+               
         return outputs
+
+
+
+# # Let's verify what compute_ar_x_preds is equivalent to
+# # We'll manually compute the autoregressive prediction and compare with the function
+
+# # Create a simple test case
+# L = 10
+# x = torch.randn(1, L, 1)  # Same x as in cell 13
+# M = torch.randn(lds_model.M.data.shape)  # Shape: [output_dim, input_dim, kx]
+
+# # Manual computation of autoregressive prediction
+# manual_ar_pred = torch.zeros(1, L, M.shape[0], device=x.device)
+# for t in range(L):
+#     for k in range(min(t+1, M.shape[2])):  # Only use available past inputs
+#         if t-k >= 0:  # Make sure we don't go out of bounds
+#             manual_ar_pred[0, t] += M[:, :, k] @ x[0, t-k]
+
+# # Using the utility function
+# ar_pred_from_function = compute_ar_x_preds(M, x)
+
+# # Compare the results
+# print("Manual computation result:")
+# print(manual_ar_pred[0, :, 0])
+# print("\nFunction computation result:")
+# print(ar_pred_from_function[0, :, 0])
+# print("\nDifference:")
+# print(torch.abs(manual_ar_pred - ar_pred_from_function).max().item())
+
+# # Verify that this is equivalent to convolution with flipped kernel
+# # For the first output dimension
+# kernel = M[0, 0].flip(dims=[0])  # Flip the kernel for convolution
+# conv_result = torch.nn.functional.conv1d(
+#     x.transpose(1, 2),  # [1, 1, L]
+#     kernel.unsqueeze(0).unsqueeze(0),  # [1, 1, kx]
+#     padding=0
+# )
+# print("\nConvolution result:")
+# print(conv_result.squeeze())
