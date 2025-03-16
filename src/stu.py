@@ -36,18 +36,18 @@ class STU(nn.Module):
         )
         if self.use_approx:
             self.M_inputs = nn.Parameter(
-                torch.empty(self.d_in, self.d_out, dtype=config.torch_dtype)
+                torch.randn(self.d_in, self.d_out, dtype=config.torch_dtype) / 10
             )
             self.M_filters = nn.Parameter(
-                torch.empty(self.K, self.d_in, dtype=config.torch_dtype)
+                torch.randn(self.K, self.d_in, dtype=config.torch_dtype)/ 10
             )
         else:
             self.M_phi_plus = nn.Parameter(
-                torch.empty(self.K, self.d_in, self.d_out, dtype=config.torch_dtype)
+                torch.randn(self.K, self.d_in, self.d_out, dtype=config.torch_dtype)/ 10
             )
             if not self.use_hankel_L:
                 self.M_phi_minus = nn.Parameter(
-                    torch.empty(self.K, self.d_in, self.d_out, dtype=config.torch_dtype)
+                    torch.randn(self.K, self.d_in, self.d_out, dtype=config.torch_dtype)/ 10
                 )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
