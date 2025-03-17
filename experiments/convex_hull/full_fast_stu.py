@@ -17,8 +17,8 @@ class FullFastSTU(nn.Module):
 
         self.config = stu.config
         self.K = stu.config.num_eigh
-        self.d_in = stu.config.n_embd
-        self.d_out = stu.config.n_embd
+        self.d_in = stu.config.n_embd if hasattr(stu.config, "n_embd") else stu.config.dim
+        self.d_out = stu.config.n_embd if hasattr(stu.config, "n_embd") else stu.config.dim
         self.use_hankel_L = stu.config.use_hankel_L
         self.use_approx = stu.config.use_approx
         
@@ -62,14 +62,15 @@ class FullFastSTU(nn.Module):
                 )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.double()
         if self.use_approx:
             # Contract inputs and filters over the K and d_in dimensions, then convolve
             x = x @ self.M_inputs
-            
+        
         # Convolve inputs and filters,
         bsz = x.shape[0]
         x_reshaped = x.permute(0, 2, 1).reshape(-1, x.shape[1], 1)  # [B*d_in, L, 1]
-        U_reshaped = self.lds(x_reshaped)  # [B*d_in, L, K]
+        U_reshaped = self.lds(x_reshaped) # [B*d_in, L, K]
         U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1)
         
         if self.use_approx:
@@ -79,7 +80,7 @@ class FullFastSTU(nn.Module):
             spectral_minus = torch.diagonal(spectral_minus, dim1=2, dim2=3)
         
         else:
-            U_plus, U_minus = U[:,:,:24,:], U[:,:,24:,:]
+            U_plus, U_minus = U[:,:,:self.K,:], U[:,:,self.K:,:]
 
             # Then, contract over the K and d_in dimensions
             spectral_plus = torch.tensordot(
@@ -90,8 +91,9 @@ class FullFastSTU(nn.Module):
                 spectral_minus = torch.tensordot(
                     U_minus, self.M_phi_minus, dims=([2, 3], [0, 1])
                 )
-
-        return spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus
+        
+        ret = spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus
+        return ret.to(torch.bfloat16)
 
     def loss(self, inputs, targets):
         pred = self.forward(inputs)
@@ -99,7 +101,7 @@ class FullFastSTU(nn.Module):
         return loss
 
 # Load the LDS model from the checkpoint
-checkpoint_path = 'best_phi_lds.pt'
+checkpoint_path = './convex_hull/best_phi_lds.pt'
 checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
 
 
