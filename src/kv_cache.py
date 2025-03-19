@@ -3,7 +3,7 @@
 #
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
-
+#THIS IS FROM TORCHTUNE, Cite appropriately
 from typing import Tuple
 
 import torch
@@ -42,32 +42,32 @@ class KVCache(nn.Module):
         )
         self.batch_size = batch_size
 
-[docs]    def reset(self) -> None:
-        """Reset the cache to zero."""
-        self.k_cache.zero_()
-        self.v_cache.zero_()
+    def reset(self) -> None:
+            """Reset the cache to zero."""
+            self.k_cache.zero_()
+            self.v_cache.zero_()
 
-[docs]    def update(
-        self, input_pos: Tensor, k_val: Tensor, v_val: Tensor
-    ) -> Tuple[Tensor, Tensor]:
-        """Update KV cache with the new k_val, v_val and return the updated cache.
+    def update(
+            self, input_pos: Tensor, k_val: Tensor, v_val: Tensor
+        ) -> Tuple[Tensor, Tensor]:
+            """Update KV cache with the new k_val, v_val and return the updated cache.
 
-        Args:
-            input_pos (Tensor): Current position tensor with shape [S]
-            k_val (Tensor): Current key tensor with shape [B, H, S, D]
-            v_val (Tensor): Current value tensor with shape [B, H, S, D]
+            Args:
+                input_pos (Tensor): Current position tensor with shape [S]
+                k_val (Tensor): Current key tensor with shape [B, H, S, D]
+                v_val (Tensor): Current value tensor with shape [B, H, S, D]
 
-        Raises:
-            ValueError: if ``input_pos`` is longer than the maximum sequence length
+            Raises:
+                ValueError: if ``input_pos`` is longer than the maximum sequence length
 
-        Returns:
-            Tuple[Tensor, Tensor]: Updated KV cache with key first
-        """
-        assert input_pos.shape[0] == k_val.shape[2]
+            Returns:
+                Tuple[Tensor, Tensor]: Updated KV cache with key first
+            """
+            assert input_pos.shape[0] == k_val.shape[2]
 
-        k_out = self.k_cache
-        v_out = self.v_cache
-        k_out[:, :, input_pos] = k_val
-        v_out[:, :, input_pos] = v_val
+            k_out = self.k_cache
+            v_out = self.v_cache
+            k_out[:, :, input_pos] = k_val
+            v_out[:, :, input_pos] = v_val
 
-        return k_out, v_out
+            return k_out, v_out

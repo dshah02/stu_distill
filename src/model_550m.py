@@ -308,8 +308,9 @@ class Attention(nn.Module):
 
         self.dropout = config.dropout
         self.resid_dropout = nn.Dropout(self.dropout)
-
-        self.kv_cache = kv_cache
+        
+        # Initialize KV cache to None (will be set by setup_caches)
+        self.kv_cache = None
 
     def reset(self):
         """Reset the KV cache."""
@@ -344,7 +345,7 @@ class Attention(nn.Module):
         k: torch.Tensor = None,
         v: torch.Tensor = None,
         freqs_cis: torch.Tensor = None,
-        cache: bool = False
+        input_pos: torch.Tensor = None,
     ) -> torch.Tensor:
         if x is not None:
             q = k = v = x
@@ -352,32 +353,30 @@ class Attention(nn.Module):
             raise ValueError("Must provide either x for self-attention or q/k/v for cross-attention.")
 
         bsz, q_len, dim = q.shape
-        _, k_len, _ = k.shape
-        _, v_len, _ = v.shape
 
         qkv = self.c_attn(x)
         q, k, v = torch.chunk(qkv, 3, dim=2)
 
         # FlashAttention expects bsz, seq_len, num_heads, head_dim
         q = q.view(bsz, q_len, self.num_heads, self.head_dim)
-        k = k.view(bsz, k_len, self.num_heads, self.head_dim)
-        v = v.view(bsz, v_len, self.num_heads, self.head_dim)
+        k = k.view(bsz, q_len, self.num_heads, self.head_dim)
+        v = v.view(bsz, q_len, self.num_heads, self.head_dim)
 
         if self.alibi_slopes is None: # Either RoPE or ALiBi for positional embedding
             q, k = apply_rotary_emb(q, k, freqs_cis=freqs_cis)
 
+        # Use KV cache if it's available
         if self.kv_cache is not None:
+            # Update the KV cache with new keys and values at the specified positions
+            # input_pos should be a tensor of shape [batch_size, seq_len] indicating positions
             k, v = self.kv_cache.update(input_pos, k, v)
         
-        y = flash_attn_func(  # https://arxiv.org/pdf/2307.08691
+        y = flash_attn_func(
             q=q, k=k, v=v,
             dropout_p=self.dropout if self.training else 0.0,
             causal=True,
-            window_size=(self.window_size, 0), # Set to config.seq_len if full attention
-            alibi_slopes=self.alibi_slopes, # https://arxiv.org/pdf/2108.12409
-            
-            # NOTE: Softcapping cannot be used simultaneously with dropout
-            # softcap=self.softcap,  # https://arxiv.org/pdf/2408.00118
+            window_size=(self.window_size, 0),
+            alibi_slopes=self.alibi_slopes,
         )
 
         y = y.contiguous().view(bsz, q_len, -1)
@@ -396,8 +395,8 @@ class AttentionLayer(nn.Module):
         """Reset the KV cache in the attention module."""
         self.attn.reset()
 
-    def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor=None, cache = False) -> torch.Tensor:
-        x = x + self.attn(x=self.attn_norm(x), freqs_cis=freqs_cis, cache = cache)
+    def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor=None, input_pos: torch.Tensor = None) -> torch.Tensor:
+        x = x + self.attn(x=self.attn_norm(x), freqs_cis=freqs_cis, input_pos=input_pos)
         x = x + self.mlp(self.mlp_norm(x))
         return x
 
@@ -521,13 +520,60 @@ class FlashSTU(PreTrainedModel):
         print("Model Parameter Count: %.2fM\n" % (self._get_num_params() / 1e6,))
 
     
-    def forward(self, x: torch.Tensor, cache: bool=False) -> torch.tensor:
+    def setup_caches(self, batch_size: int, dtype: torch.dtype = None) -> None:
+        """Setup key value caches for attention calculation.
+
+        Args:
+            batch_size (int): batch size for the caches.
+            dtype (torch.dtype): dtype for the caches.
+        """
+        if dtype is None:
+            dtype = self.config.torch_dtype
+            
+        for layer in self.layers:
+            if hasattr(layer, "attn"):
+                layer.attn.kv_cache = KVCache(
+                    batch_size=batch_size,
+                    max_seq_len=self.config.seq_len,
+                    num_heads=self.config.num_heads,
+                    head_dim=self.head_dim,
+                    dtype=dtype,
+                )
+
+
+    def caches_are_enabled(self) -> bool:
+        """Check if the key value caches are setup."""
+        for layer in self.layers:
+            if hasattr(layer, "attn") and layer.attn.kv_cache is not None:
+                return True
+        return False
+
+    def reset_caches(self):
+        """Reset the key value caches."""
+        if not self.caches_are_enabled():
+            raise RuntimeError(
+                "Key value caches are not setup. Call ``setup_caches()`` first."
+            )
+
+        for layer in self.layers:
+            if hasattr(layer, "attn"):
+                layer.attn.kv_cache.reset()
+                
+    def forward(self, x: torch.Tensor, input_pos: torch.Tensor = None, cache: bool = False) -> torch.tensor:
+        """
+        Forward pass with optional caching support.
+        
+        Args:
+            x (torch.Tensor): Input token ids [batch_size, seq_len]
+            input_pos (torch.Tensor, optional): Positions in sequence for the tokens, used with KV cache
+            cache (bool, optional): Whether to use KV caching
+        """
         tok_emb = self.tok_emb(x)
         x = self.dropout(tok_emb)
 
         for layer in self.layers:
             if hasattr(layer, "attn"): # Pass RoPE freq_cis to attention layers
-                x = layer(x, freqs_cis=self.freqs_cis, cache=cache)
+                x = layer(x, freqs_cis=self.freqs_cis, input_pos=input_pos)
             else:
                 x = layer(x)
 
