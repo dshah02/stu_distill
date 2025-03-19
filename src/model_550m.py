@@ -309,6 +309,14 @@ class Attention(nn.Module):
         self.dropout = config.dropout
         self.resid_dropout = nn.Dropout(self.dropout)
 
+        self.k_cache = None
+        self.v_cache = None
+
+    def reset(self):
+        """Reset the KV cache."""
+        self.k_cache = None
+        self.v_cache = None
+
     def _generate_slopes(self, n: int):
             start = 2 ** (-(2 ** -(math.log2(n) - 3)))
             return [start * (start**i) for i in range(n)]
@@ -337,6 +345,7 @@ class Attention(nn.Module):
         k: torch.Tensor = None,
         v: torch.Tensor = None,
         freqs_cis: torch.Tensor = None,
+        cache: bool = False
     ) -> torch.Tensor:
         if x is not None:
             q = k = v = x
@@ -358,6 +367,30 @@ class Attention(nn.Module):
         if self.alibi_slopes is None: # Either RoPE or ALiBi for positional embedding
             q, k = apply_rotary_emb(q, k, freqs_cis=freqs_cis)
 
+        if cache:
+            if self.k_cache is None:
+                # First inference step - initialize cache
+                self.k_cache = k
+                self.v_cache = v
+            else:
+                # Use just the last token's key and value
+                if q_len > 1:
+                    # If we have multiple tokens, assume all but the last are cached
+                    k_new, v_new = k[:, -1:], v[:, -1:]
+                    
+                    # Concatenate with existing cache
+                    self.k_cache = torch.cat((self.k_cache, k_new), dim=1)
+                    self.v_cache = torch.cat((self.v_cache, v_new), dim=1)
+                    
+                    # Use the full cached keys and values
+                    k, v = self.k_cache, self.v_cache
+                else:
+                    # Single token case - add to cache and use full cache
+                    self.k_cache = torch.cat((self.k_cache, k), dim=1)
+                    self.v_cache = torch.cat((self.v_cache, v), dim=1)
+                    k, v = self.k_cache, self.v_cache
+
+        
         y = flash_attn_func(  # https://arxiv.org/pdf/2307.08691
             q=q, k=k, v=v,
             dropout_p=self.dropout if self.training else 0.0,
@@ -380,6 +413,10 @@ class AttentionLayer(nn.Module):
         self.attn = Attention(config=config)
         self.mlp_norm = nn.RMSNorm(config.dim)
         self.mlp = MLP(config)
+
+    def reset(self):
+        """Reset the KV cache in the attention module."""
+        self.attn.reset()
 
     def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor=None) -> torch.Tensor:
         x = x + self.attn(x=self.attn_norm(x), freqs_cis=freqs_cis)
@@ -505,6 +542,7 @@ class FlashSTU(PreTrainedModel):
         self.apply(self._init_weights)
         print("Model Parameter Count: %.2fM\n" % (self._get_num_params() / 1e6,))
 
+    
     def forward(self, x: torch.Tensor) -> torch.tensor:
         tok_emb = self.tok_emb(x)
         x = self.dropout(tok_emb)
@@ -517,6 +555,12 @@ class FlashSTU(PreTrainedModel):
 
         y_hat = self.lm_head(self.norm(x))
         return y_hat
+    
+    def reset(self):
+        """Reset all KV caches in the model."""
+        for layer in self.layers:
+            if hasattr(layer, "attn"):
+                layer.reset()
 
     def _get_num_params(self):
         n_params = sum(p.numel() for p in self.parameters())
