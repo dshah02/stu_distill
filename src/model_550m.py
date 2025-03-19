@@ -543,13 +543,13 @@ class FlashSTU(PreTrainedModel):
         print("Model Parameter Count: %.2fM\n" % (self._get_num_params() / 1e6,))
 
     
-    def forward(self, x: torch.Tensor) -> torch.tensor:
+    def forward(self, x: torch.Tensor, cache: bool=False) -> torch.tensor:
         tok_emb = self.tok_emb(x)
         x = self.dropout(tok_emb)
 
         for layer in self.layers:
             if hasattr(layer, "attn"): # Pass RoPE freq_cis to attention layers
-                x = layer(x, freqs_cis=self.freqs_cis)
+                x = layer(x, freqs_cis=self.freqs_cis, cache=cache)
             else:
                 x = layer(x)
 
