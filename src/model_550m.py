@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from torch.nn.functional import gelu, pad
 from transformers import PreTrainedModel, PretrainedConfig
-
+from kv_cache import KVCache
 
 try:
     from flashfftconv import FlashFFTConv
@@ -309,8 +309,7 @@ class Attention(nn.Module):
         self.dropout = config.dropout
         self.resid_dropout = nn.Dropout(self.dropout)
 
-        self.k_cache = None
-        self.v_cache = None
+        self.kv_cache = kv_cache
 
     def reset(self):
         """Reset the KV cache."""
@@ -367,29 +366,8 @@ class Attention(nn.Module):
         if self.alibi_slopes is None: # Either RoPE or ALiBi for positional embedding
             q, k = apply_rotary_emb(q, k, freqs_cis=freqs_cis)
 
-        if cache:
-            if self.k_cache is None:
-                # First inference step - initialize cache
-                self.k_cache = k
-                self.v_cache = v
-            else:
-                # Use just the last token's key and value
-                if q_len > 1:
-                    # If we have multiple tokens, assume all but the last are cached
-                    k_new, v_new = k[:, -1:], v[:, -1:]
-                    
-                    # Concatenate with existing cache
-                    self.k_cache = torch.cat((self.k_cache, k_new), dim=1)
-                    self.v_cache = torch.cat((self.v_cache, v_new), dim=1)
-                    
-                    # Use the full cached keys and values
-                    k, v = self.k_cache, self.v_cache
-                else:
-                    # Single token case - add to cache and use full cache
-                    self.k_cache = torch.cat((self.k_cache, k), dim=1)
-                    self.v_cache = torch.cat((self.v_cache, v), dim=1)
-                    k, v = self.k_cache, self.v_cache
-
+        if self.kv_cache is not None:
+            k, v = self.kv_cache.update(input_pos, k, v)
         
         y = flash_attn_func(  # https://arxiv.org/pdf/2307.08691
             q=q, k=k, v=v,
@@ -418,8 +396,8 @@ class AttentionLayer(nn.Module):
         """Reset the KV cache in the attention module."""
         self.attn.reset()
 
-    def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor=None) -> torch.Tensor:
-        x = x + self.attn(x=self.attn_norm(x), freqs_cis=freqs_cis)
+    def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor=None, cache = False) -> torch.Tensor:
+        x = x + self.attn(x=self.attn_norm(x), freqs_cis=freqs_cis, cache = cache)
         x = x + self.mlp(self.mlp_norm(x))
         return x
 
