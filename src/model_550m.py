@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.nn.functional import gelu, pad
 from transformers import PreTrainedModel, PretrainedConfig
 from kv_cache import KVCache
+from cache import Cache
 
 try:
     from flashfftconv import FlashFFTConv
@@ -224,6 +225,9 @@ class STU(nn.Module):
         self.d_out = config.dim
         self.use_hankel_L = config.use_hankel_L
         self.use_approx = config.use_approx
+        self.cache = None
+        
+
         self.flash_fft = ( # TODO: Buggy with torch.compile, need to write a custom op wrapper
             FlashFFTConv(self.n, dtype=torch.bfloat16)
             if config.use_flash_fft and flash_fft_available
@@ -245,12 +249,31 @@ class STU(nn.Module):
                     torch.empty(self.K, self.d_in, self.d_out, dtype=config.torch_dtype)
                 )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, input_pos) -> torch.Tensor:
         if self.use_approx:
             # Contract inputs and filters over the K and d_in dimensions, then convolve
             x_proj = x @ self.M_inputs
             phi_proj = self.stu_filters @ self.M_filters
+
+            if self.cache is not None:
+                _ = self.cache.update(x_proj, input_pos) #updated
+            
+            if self.cache is not None and input_pos.shape[0] == 1: #not first
+                #x_proj is [1, 8192, d_out], phi_proj is [8192, d_out]
+                # print(x_proj.shape) [1, 1, 896]
+                x_proj = self.cache.update(x_proj.squeeze(dim = 0), input_pos)
+                # print(x_proj.shape) [1, 8192, 896]
+               
+                spectral_plus = (x_proj * phi_proj.unsqueeze(0)).sum(dim = 1).unsqueeze(dim = 0)
+                
+                sgn = torch.ones_like(x_proj[:, :, 0], device = torch.device('cuda')) #NEED TO GET DEVICE HERE
+                sgn[:, 1::2] = -1
+                spectral_minus = (x_proj * sgn.unsqueeze(-1) * phi_proj.unsqueeze(0)).sum(dim=1).unsqueeze(dim = 0)
+               
+                print(spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus) #[1, 1, d_out]
+            
             if self.flash_fft:
+                
                 spectral_plus, spectral_minus = flash_convolve(
                     x_proj, phi_proj, self.flash_fft, self.use_approx
                 )
@@ -274,7 +297,8 @@ class STU(nn.Module):
                 spectral_minus = torch.tensordot(
                     U_minus, self.M_phi_minus, dims=([2, 3], [0, 1])
                 )
-
+        if input_pos.shape[0] == 1:
+            print((spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus)[:,-1,:])
         return spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus
 
 
@@ -286,8 +310,8 @@ class STULayer(nn.Module):
         self.mlp_norm = nn.RMSNorm(config.dim)
         self.mlp = MLP(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x + self.stu(self.stu_norm(x))
+    def forward(self, x: torch.Tensor, input_pos) -> torch.Tensor:
+        x = x + self.stu(self.stu_norm(x), input_pos)
         x = x + self.mlp(self.mlp_norm(x))
         return x
 
@@ -311,11 +335,6 @@ class Attention(nn.Module):
         
         # Initialize KV cache to None (will be set by setup_caches)
         self.kv_cache = None
-
-    def reset(self):
-        """Reset the KV cache."""
-        self.k_cache = None
-        self.v_cache = None
 
     def _generate_slopes(self, n: int):
             start = 2 ** (-(2 ** -(math.log2(n) - 3)))
@@ -357,20 +376,32 @@ class Attention(nn.Module):
         qkv = self.c_attn(x)
         q, k, v = torch.chunk(qkv, 3, dim=2)
 
-        # FlashAttention expects bsz, seq_len, num_heads, head_dim
+        # FlashAttention expects bsz, input_len, num_heads, head_dim
         q = q.view(bsz, q_len, self.num_heads, self.head_dim)
         k = k.view(bsz, q_len, self.num_heads, self.head_dim)
         v = v.view(bsz, q_len, self.num_heads, self.head_dim)
 
         if self.alibi_slopes is None: # Either RoPE or ALiBi for positional embedding
             q, k = apply_rotary_emb(q, k, freqs_cis=freqs_cis)
-
+        
         # Use KV cache if it's available
         if self.kv_cache is not None:
             # Update the KV cache with new keys and values at the specified positions
             # input_pos should be a tensor of shape [batch_size, seq_len] indicating positions
             k, v = self.kv_cache.update(input_pos, k, v)
-        
+            
+            # q = q[:, input_pos].view(bsz, -1, self.num_heads, self.head_dim)
+            # print("IP:", input_pos, k.shape)
+            if len(input_pos) == 1: #needed?
+                k = k[:, :input_pos+1]
+                v = v[:, :input_pos+1]
+                # q_len = input_pos+1
+            else:
+                k = k[:, :max(input_pos)+1]
+                v = v[:, :max(input_pos)+1]
+                # q_len = max(input_pos)+1
+            
+        # print(input_pos,q.shape, k.shape, v.shape)/
         y = flash_attn_func(
             q=q, k=k, v=v,
             dropout_p=self.dropout if self.training else 0.0,
@@ -379,8 +410,14 @@ class Attention(nn.Module):
             alibi_slopes=self.alibi_slopes,
         )
 
+
+        # if self.kv_cache is not None:
+        #     y = self.kv_cache.update_y(y, input_pos)[:, :q_len]
+
         y = y.contiguous().view(bsz, q_len, -1)
+        
         y = self.resid_dropout(self.c_proj(y))
+        
         return y
 
 class AttentionLayer(nn.Module):
@@ -396,6 +433,7 @@ class AttentionLayer(nn.Module):
         self.attn.reset()
 
     def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor=None, input_pos: torch.Tensor = None) -> torch.Tensor:
+        
         x = x + self.attn(x=self.attn_norm(x), freqs_cis=freqs_cis, input_pos=input_pos)
         x = x + self.mlp(self.mlp_norm(x))
         return x
@@ -538,7 +576,14 @@ class FlashSTU(PreTrainedModel):
                     num_heads=self.config.num_heads,
                     head_dim=self.head_dim,
                     dtype=dtype,
-                )
+                ).to(self.device)
+            if hasattr(layer, "stu"):
+                layer.stu.cache = Cache(
+                    batch_size=batch_size,
+                    max_seq_len=self.config.seq_len,
+                    dim=self.config.dim,
+                    dtype=dtype,
+                ).to(self.device)
 
 
     def caches_are_enabled(self) -> bool:
@@ -558,6 +603,8 @@ class FlashSTU(PreTrainedModel):
         for layer in self.layers:
             if hasattr(layer, "attn"):
                 layer.attn.kv_cache.reset()
+            elif hasattr(layer, 'stu'):
+                layer.stu.cache.reset()
                 
     def forward(self, x: torch.Tensor, input_pos: torch.Tensor = None, cache: bool = False) -> torch.tensor:
         """
@@ -572,10 +619,13 @@ class FlashSTU(PreTrainedModel):
         x = self.dropout(tok_emb)
 
         for layer in self.layers:
+            # print("IN", x.shape)
+            # print("IP", input_pos)
             if hasattr(layer, "attn"): # Pass RoPE freq_cis to attention layers
                 x = layer(x, freqs_cis=self.freqs_cis, input_pos=input_pos)
             else:
-                x = layer(x)
+                x = layer(x, input_pos = input_pos)
+            # print("OUT", x.shape)
 
         y_hat = self.lm_head(self.norm(x))
         return y_hat

@@ -132,20 +132,27 @@ def generate_text(
         [tokenizer.encode(prompt, allowed_special={"<|endoftext|>"})],
         device=device,
     )
+    seq_len = tokens.shape[1]
     tokens = tokens.repeat(num_return_sequences, 1)
+    
+    input_pos = torch.arange(seq_len, device=device)
 
+    
     sample_rng = torch.Generator(device=device)
     sample_rng.manual_seed(1746)
 
     eos_token_id = tokenizer.encode(
         "<|endoftext|>", allowed_special={"<|endoftext|>"}
     )[0]
-
+    cur_token = seq_len
     with torch.no_grad():
-        for _ in range(max_length - tokens.size(1)):
+        for idx in range(max_length - tokens.size(1)):
             with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
                 # Fwd pass. Inspect logits here.
-                logits = model(tokens)     # shape: [batch, seq, vocab]
+                if idx != 0:
+                    logits = model(tokens[:, -1:], input_pos = input_pos)     # shape: [batch, 1, vocab]
+                else:
+                    logits = model(tokens, input_pos = input_pos)     # shape: [batch, seq, vocab]
                 logits = logits[:, -1, :]  # last token logits
 
                 # Apply temperature scaling.
@@ -162,7 +169,8 @@ def generate_text(
 
             # Append next token.
             tokens = torch.cat((tokens, next_token), dim=1)
-
+            input_pos = torch.tensor([cur_token]).to(device)
+            cur_token +=1 
             # Stop if EOS token is generated.
             if (next_token == eos_token_id).any():
                 break
@@ -199,7 +207,7 @@ def main():
     # BASE SETTINGS:
     BASE_TEMPERATURE = 0.7  # Increase for more randomness.
     BASE_TOP_K = 50         # Limit sampling to the top k tokens.
-    MAX_LENGTH = 5000        # Maximum number of tokens to generate.
+    MAX_LENGTH = 500        # Maximum number of tokens to generate.
     # -------------------------------------------------------------------
 
     total_tokens = 0
@@ -207,6 +215,7 @@ def main():
 
     for i, prompt in enumerate(prompts, 1):
         print(f"Generating text for prompt {i}: {prompt}")
+        model.setup_caches(batch_size = 1)
         generated_texts = generate_text(
             model,
             tokenizer,

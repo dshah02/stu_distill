@@ -33,13 +33,16 @@ class KVCache(nn.Module):
         dtype: torch.dtype,
     ) -> None:
         super().__init__()
-        cache_shape = (batch_size, num_heads, max_seq_len, head_dim)
+        cache_shape = (batch_size, max_seq_len, num_heads, head_dim)
         self.register_buffer(
             "k_cache", torch.zeros(cache_shape, dtype=dtype), persistent=False
         )
         self.register_buffer(
             "v_cache", torch.zeros(cache_shape, dtype=dtype), persistent=False
         )
+        # self.register_buffer(
+        #     "y_cache", torch.zeros(cache_shape, dtype=dtype), persistent=False
+        # )
         self.batch_size = batch_size
 
     def reset(self) -> None:
@@ -54,20 +57,24 @@ class KVCache(nn.Module):
 
             Args:
                 input_pos (Tensor): Current position tensor with shape [S]
-                k_val (Tensor): Current key tensor with shape [B, H, S, D]
-                v_val (Tensor): Current value tensor with shape [B, H, S, D]
-
-            Raises:
-                ValueError: if ``input_pos`` is longer than the maximum sequence length
+                k_val (Tensor): Current key tensor with shape [B, S, H, D]
+                v_val (Tensor): Current value tensor with shape [B, S, H, D]
 
             Returns:
                 Tuple[Tensor, Tensor]: Updated KV cache with key first
             """
-            assert input_pos.shape[0] == k_val.shape[2]
-
-            k_out = self.k_cache
-            v_out = self.v_cache
-            k_out[:, :, input_pos] = k_val
-            v_out[:, :, input_pos] = v_val
-
-            return k_out, v_out
+                
+            # Update the cache
+            print(input_pos, k_val.shape, self.k_cache.shape)
+            self.k_cache[:, input_pos] = k_val
+            self.v_cache[:, input_pos] = v_val
+            
+            
+            return self.k_cache, self.v_cache
+    
+    # def update_y(
+    #             self, y_val, input_pos
+    # ):
+        
+    #       self.y_cache[:, input_pos] = y_val
+    #       return self.y_cache

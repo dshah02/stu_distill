@@ -111,4 +111,3 @@ if flash_fft_available:
             U_minus = u_minus.view(bsz, d_in, K, seq_len).permute(0, 3, 2, 1).contiguous() * sgn
 
         return U_plus, U_minus
-
