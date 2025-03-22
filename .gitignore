@@ -1,5 +1,4 @@
 fineweb-edu/
-lds_trained/
 models/model_19073.safetensors
 *.safetensorsexperiments/lds_*.pth
 experiments/lds_*.pth
