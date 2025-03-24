@@ -181,7 +181,19 @@ def main():
 
     # Load model and config.
     model, config_data = load_stu_model(CONFIG_PATH, CHECKPOINT_PATH, device)
-    tokenizer = tiktoken.get_encoding("o200k_base")
+    from tiktoken.load import load_tiktoken_bpe
+    bpe_path = "./models/o200k_base.tiktoken"
+    bpe_dict = load_tiktoken_bpe(bpe_path)
+    
+    tokenizer = tiktoken.Encoding(
+        name="o200k_base",  # Name of the encoding
+        pat_str=r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+""",
+        mergeable_ranks=bpe_dict,
+        special_tokens={
+            "<|endoftext|>": 199999,  # Custom special token example (modify as needed)
+            "<|endofprompt|>": 200018,
+        }
+    )
 
     # Collect prompt(s) from user.
     prompts = []

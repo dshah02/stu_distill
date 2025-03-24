@@ -259,19 +259,31 @@ class STU(nn.Module):
                 _ = self.cache.update(x_proj, input_pos) #updated
             
             if self.cache is not None and input_pos.shape[0] == 1: #not first
-                #x_proj is [1, 8192, d_out], phi_proj is [8192, d_out]
-                # print(x_proj.shape) [1, 1, 896]
-                x_proj = self.cache.update(x_proj.squeeze(dim = 0), input_pos)
-                # print(x_proj.shape) [1, 8192, 896]
-               
-                spectral_plus = (x_proj * phi_proj.unsqueeze(0)).sum(dim = 1).unsqueeze(dim = 0)
+                # Update and remove the extra batch dimension
+                x_proj = self.cache.update(x_proj.squeeze(dim=0), input_pos)
                 
-                sgn = torch.ones_like(x_proj[:, :, 0], device = torch.device('cuda')) #NEED TO GET DEVICE HERE
-                sgn[:, 1::2] = -1
-                spectral_minus = (x_proj * sgn.unsqueeze(-1) * phi_proj.unsqueeze(0)).sum(dim=1).unsqueeze(dim = 0)
+                # Extract the subset of x_proj up to the current position and flip it along the sequence dimension
+                pos = input_pos.item()
+                subset_seq = x_proj[:, :pos+1, :]
+                flipped_seq = torch.flip(subset_seq, dims=[1])
+                
+                sign = torch.ones(phi_proj.size(0), device= phi_proj.device )
+                sign[1::2] = -1 
+                alt_phi_proj = phi_proj * sign.unsqueeze(-1)
+
+                
+                common_length = flipped_seq.size(1)
+                
+                
+                flipped_seq_clipped = flipped_seq[:, :common_length, :]
+                phi_proj_clipped = phi_proj[:common_length, :]
+                alt_phi_proj_clipped = alt_phi_proj[:common_length, :]
+                
+                spectral_plus = torch.sum(flipped_seq_clipped * phi_proj_clipped.unsqueeze(0), dim=1, keepdim=True)
+                spectral_minus = torch.sum(flipped_seq_clipped * alt_phi_proj_clipped.unsqueeze(0), dim=1, keepdim=True)
                
-                print(spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus) #[1, 1, d_out]
-            
+        
+                return spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus
             if self.flash_fft:
                 
                 spectral_plus, spectral_minus = flash_convolve(
@@ -297,8 +309,8 @@ class STU(nn.Module):
                 spectral_minus = torch.tensordot(
                     U_minus, self.M_phi_minus, dims=([2, 3], [0, 1])
                 )
-        if input_pos.shape[0] == 1:
-            print((spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus)[:,-1,:])
+        # if input_pos.shape[0] == 1:
+            # print((spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus)[:,-1,:])
         return spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus
 
 
@@ -381,7 +393,7 @@ class Attention(nn.Module):
         k = k.view(bsz, q_len, self.num_heads, self.head_dim)
         v = v.view(bsz, q_len, self.num_heads, self.head_dim)
 
-        if self.alibi_slopes is None: # Either RoPE or ALiBi for positional embedding
+        if self.alibi_slopes is None: # Either RoPE or ALiBi for positional embedding, need to make sure this is chill with input_pos
             q, k = apply_rotary_emb(q, k, freqs_cis=freqs_cis)
         
         # Use KV cache if it's available
@@ -389,19 +401,15 @@ class Attention(nn.Module):
             # Update the KV cache with new keys and values at the specified positions
             # input_pos should be a tensor of shape [batch_size, seq_len] indicating positions
             k, v = self.kv_cache.update(input_pos, k, v)
-            
-            # q = q[:, input_pos].view(bsz, -1, self.num_heads, self.head_dim)
-            # print("IP:", input_pos, k.shape)
-            if len(input_pos) == 1: #needed?
+  
+            if len(input_pos) == 1:
                 k = k[:, :input_pos+1]
                 v = v[:, :input_pos+1]
-                # q_len = input_pos+1
+
             else:
                 k = k[:, :max(input_pos)+1]
                 v = v[:, :max(input_pos)+1]
-                # q_len = max(input_pos)+1
-            
-        # print(input_pos,q.shape, k.shape, v.shape)/
+
         y = flash_attn_func(
             q=q, k=k, v=v,
             dropout_p=self.dropout if self.training else 0.0,
@@ -409,10 +417,6 @@ class Attention(nn.Module):
             window_size=(self.window_size, 0),
             alibi_slopes=self.alibi_slopes,
         )
-
-
-        # if self.kv_cache is not None:
-        #     y = self.kv_cache.update_y(y, input_pos)[:, :q_len]
 
         y = y.contiguous().view(bsz, q_len, -1)
         
@@ -602,9 +606,9 @@ class FlashSTU(PreTrainedModel):
 
         for layer in self.layers:
             if hasattr(layer, "attn"):
-                layer.attn.kv_cache.reset()
+                layer.attn.kv_cache = None
             elif hasattr(layer, 'stu'):
-                layer.stu.cache.reset()
+                layer.stu.cache = None
                 
     def forward(self, x: torch.Tensor, input_pos: torch.Tensor = None, cache: bool = False) -> torch.tensor:
         """
@@ -619,13 +623,11 @@ class FlashSTU(PreTrainedModel):
         x = self.dropout(tok_emb)
 
         for layer in self.layers:
-            # print("IN", x.shape)
-            # print("IP", input_pos)
             if hasattr(layer, "attn"): # Pass RoPE freq_cis to attention layers
                 x = layer(x, freqs_cis=self.freqs_cis, input_pos=input_pos)
             else:
                 x = layer(x, input_pos = input_pos)
-            # print("OUT", x.shape)
+            
 
         y_hat = self.lm_head(self.norm(x))
         return y_hat

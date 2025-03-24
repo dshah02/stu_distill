@@ -10,14 +10,15 @@ from time import time
 import torch
 import torch.nn.functional as F
 import tiktoken
+import torch.nn as nn
 
 from safetensors import safe_open
 
-from model import FlashSTU, FlashSTUConfig, get_spectral_filters
+from model_550m import FlashSTU, FlashSTUConfig, get_spectral_filters
 
 
-CHECKPOINT_PATH = "model_step-114000.safetensors"
-CONFIG_PATH = "config.json"
+CHECKPOINT_PATH = "./models/model_step-114000.safetensors"
+CONFIG_PATH = "./models/config_2-7b.json"
 
 
 def apply_compile(model: nn.Module) -> None:
@@ -180,7 +181,19 @@ def main():
 
     # Load model and config.
     model, config_data = load_stu_model(CONFIG_PATH, CHECKPOINT_PATH, device)
-    tokenizer = tiktoken.get_encoding("o200k_base")
+    from tiktoken.load import load_tiktoken_bpe
+    bpe_path = "./models/o200k_base.tiktoken"
+    bpe_dict = load_tiktoken_bpe(bpe_path)
+    
+    tokenizer = tiktoken.Encoding(
+        name="o200k_base",  # Name of the encoding
+        pat_str=r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+""",
+        mergeable_ranks=bpe_dict,
+        special_tokens={
+            "<|endoftext|>": 199999,  # Custom special token example (modify as needed)
+            "<|endofprompt|>": 200018,
+        }
+    )
 
     # Collect prompt(s) from user.
     prompts = []
@@ -198,7 +211,7 @@ def main():
     # BASE SETTINGS:
     BASE_TEMPERATURE = 0.7  # Increase for more randomness.
     BASE_TOP_K = 50         # Limit sampling to the top k tokens.
-    MAX_LENGTH = 512        # Maximum number of tokens to generate.
+    MAX_LENGTH = 5000        # Maximum number of tokens to generate.
     # -------------------------------------------------------------------
 
     total_tokens = 0

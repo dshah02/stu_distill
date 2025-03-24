@@ -11,11 +11,15 @@ import torch
 import torch.nn.functional as F
 import tiktoken
 import torch.nn as nn
-
+import copy
 from safetensors import safe_open
 
 from model_550m import FlashSTU, FlashSTUConfig, get_spectral_filters
 
+import sys
+import os
+sys.path.append(os.path.abspath("./experiments/convex_hull"))
+from full_fast_stu import FullFastSTU
 
 CHECKPOINT_PATH = "./models/model_step-114000.safetensors"
 CONFIG_PATH = "./models/config_2-7b.json"
@@ -185,6 +189,9 @@ def generate_text(
 
 
 def main():
+
+    
+
     device = torch.device("cuda")
 
     # Load model and config.
@@ -202,7 +209,13 @@ def main():
             "<|endofprompt|>": 200018,
         }
     )
+    
 
+    for idx in range(0, 12, 2):
+        stu_layer = copy.deepcopy(model.layers[idx].stu)
+        fast_layer = FullFastSTU(stu_layer.cuda()).cuda()
+        model.layers[idx].stu = fast_layer
+        
 
     # Collect prompt(s) from user.
     prompts = []
