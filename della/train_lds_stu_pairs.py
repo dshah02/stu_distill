@@ -12,12 +12,15 @@ import torch.nn.functional as F
 import math
 import numpy as np
 import tqdm
-
+import random
 # Parse command line arguments
+
+uid = str(random.random())[2:10]
+
 parser = argparse.ArgumentParser(description='Train STU models on random LDS systems')
 parser.add_argument('--steps', type=int, default=5000, help='Number of training steps for each STU')
 parser.add_argument('--num_models', type=int, default=200, help='Number of LDS-STU pairs to train')
-parser.add_argument('--prefix', type=str, default='', help='Prefix for saved model filenames')
+parser.add_argument('--prefix', type=str, default=uid, help='Prefix for saved model filenames')
 parser.add_argument('--batch', type=int, default=1, help='batch size')
 parser.add_argument('--lb', type=float, default=0.95, help='lds lambda lower_bound')
 args = parser.parse_args()
@@ -122,7 +125,7 @@ def train_stu(lds, steps, verbose=True):
 # stu_model, _ = train_stu(lds)
 
 # Create directory if it doesn't exist
-os.makedirs('lds_trained', exist_ok=True)
+os.makedirs('lds_trained_2', exist_ok=True)
 
 for i in tqdm.tqdm(range(args.num_models)):
     new_lds = random_LDS(d_h=d_h, d_o=d_out, d_u=d_in, lower_bound=args.lb)
