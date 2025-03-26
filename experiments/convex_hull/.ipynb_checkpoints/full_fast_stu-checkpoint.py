@@ -7,8 +7,8 @@ import sys
 import os
 sys.path.append(os.path.abspath("../../src"))
 
-from lds import LDS
-# from inference_lds import LDS
+# from lds import LDS
+from inference_lds import LDS
 
 class FullFastSTU(nn.Module):
     def __init__(self, stu, name = None) -> None:
@@ -23,6 +23,7 @@ class FullFastSTU(nn.Module):
         self.d_out = stu.config.n_embd if hasattr(stu.config, "n_embd") else stu.config.dim
         self.use_hankel_L = stu.config.use_hankel_L
         self.use_approx = stu.config.use_approx
+        
 
         if name is not None:
             self.lds = self.get_lds(name)
