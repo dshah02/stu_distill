@@ -40,12 +40,14 @@ class FullFastSTU(nn.Module):
             # Split the LDS.C data into two parts (for plus and minus)
             C_plus = self.lds.C.data[:, :24]  # First 24 coordinates
             C_minus = self.lds.C.data[:, 24:] # Second 24 coordinates
+
+            self.M_filters = M_filters
             
-            # Apply M_filters to each part separately
+            # # Apply M_filters to each part separately
             C_plus_transformed = C_plus @ M_filters
             C_minus_transformed = C_minus @ M_filters
             
-            # Concatenate the results to get shape [1149, 2*d_in]
+            # # Concatenate the results to get shape [1149, 2*d_in]
             self.lds.C.data = torch.cat([C_plus_transformed, C_minus_transformed], dim=1)
             
             # Similarly for M data
@@ -76,10 +78,23 @@ class FullFastSTU(nn.Module):
         # Convolve inputs and filters,
         bsz = x.shape[0]
         x_reshaped = x.permute(0, 2, 1).reshape(-1, x.shape[1], 1)  # [B*d_in, L, 1]
-        U_reshaped = self.lds(x_reshaped) # [B*d_in, L, K]
-        U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1)
+
+        #NEW IDEA and we don't change the LDS
+        # if self.use_approx:
+        #     # print(self.lds(x_reshaped)).shape
+        #     U_reshaped = self.lds(x_reshaped)
+        #     U_reshaped = torch.stack([U_reshaped[:, :, :24] @ self.M_filters, U_reshaped[:, :, 24:] @ self.M_filters], dim = -1)
+        #     print("FIRST", U_reshaped.shape)# [B*d_in, L, 2 * d_in]
+            
+        # else:    
+        #     U_reshaped = self.lds(x_reshaped)  # [B*d_in, L, K]
+
+        U_reshaped = self.lds(x_reshaped)  # [B*d_in, L, K]
         
+        U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1)
+        print("SECOND", U.shape)
         if self.use_approx:
+            
             spectral_plus, spectral_minus = U[:,:,:self.d_out,:], U[:,:,self.d_out:,:]
             # Extract diagonal terms to convert from [bsz, s_len, n_eigh, n_eigh] to [bsz, s_len, n_eigh]
             spectral_plus = torch.diagonal(spectral_plus, dim1=2, dim2=3)
@@ -117,8 +132,10 @@ class FullFastSTU(nn.Module):
             input_dim=checkpoint['input_dim'],
             output_dim=checkpoint['output_dim'],
             kx=checkpoint['kx'],
-            dtype=torch.float32 if checkpoint['dtype'] == 'torch.float32' else torch.float64
+            dtype=torch.float32 if checkpoint['dtype'] == 'torch.float32' else torch.float64,
+            
         )
+        
         
         # Load the weights from checkpoint
         lds_phi.load_state_dict(checkpoint['model_state_dict'], strict = False)
