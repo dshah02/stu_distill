@@ -235,18 +235,18 @@ class STU(nn.Module):
         )
         if self.use_approx:
             self.M_inputs = nn.Parameter(
-                torch.empty(self.d_in, self.d_out, dtype=config.torch_dtype)
+                torch.randn(self.d_in, self.d_out, dtype=config.torch_dtype)
             )
             self.M_filters = nn.Parameter(
-                torch.empty(self.K, self.d_in, dtype=config.torch_dtype)
+                torch.randn(self.K, self.d_in, dtype=config.torch_dtype)
             )
         else:
             self.M_phi_plus = nn.Parameter(
-                torch.empty(self.K, self.d_in, self.d_out, dtype=config.torch_dtype)
+                torch.randn(self.K, self.d_in, self.d_out, dtype=config.torch_dtype)
             )
             if not self.use_hankel_L:
                 self.M_phi_minus = nn.Parameter(
-                    torch.empty(self.K, self.d_in, self.d_out, dtype=config.torch_dtype)
+                    torch.randn(self.K, self.d_in, self.d_out, dtype=config.torch_dtype)
                 )
 
     def forward(self, x: torch.Tensor, input_pos) -> torch.Tensor:
@@ -588,6 +588,10 @@ class FlashSTU(PreTrainedModel):
                     dim=self.config.dim,
                     dtype=dtype,
                 ).to(self.device)
+            if hasattr(layer, "stu"):
+                if hasattr(layer.stu, "lds"):
+                    layer.stu.lds.reset_state()
+                    layer.stu.lds.cache = True
 
 
     def caches_are_enabled(self) -> bool:
@@ -607,10 +611,13 @@ class FlashSTU(PreTrainedModel):
         for layer in self.layers:
             if hasattr(layer, "attn"):
                 layer.attn.kv_cache = None
-            elif hasattr(layer, 'stu'):
+            if hasattr(layer, 'stu'):
                 layer.stu.cache = None
+            if hasattr(layer, 'stu'):
+                if hasattr(layer.stu, 'lds'):
+                    layer.stu.lds.reset_state()
                 
-    def forward(self, x: torch.Tensor, input_pos: torch.Tensor = None, cache: bool = False) -> torch.tensor:
+    def forward(self, x: torch.Tensor, input_pos: torch.Tensor = None) -> torch.tensor:
         """
         Forward pass with optional caching support.
         
@@ -637,6 +644,7 @@ class FlashSTU(PreTrainedModel):
         for layer in self.layers:
             if hasattr(layer, "attn"):
                 layer.reset()
+                
 
     def _get_num_params(self):
         n_params = sum(p.numel() for p in self.parameters())

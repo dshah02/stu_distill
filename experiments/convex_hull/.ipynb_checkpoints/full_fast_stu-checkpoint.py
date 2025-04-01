@@ -36,30 +36,9 @@ class FullFastSTU(nn.Module):
             )
 
             # Stack the weights along the first axis to match dimensions
-            M_filters = stu.M_filters.data.to(torch.float64)
-            # Split the LDS.C data into two parts (for plus and minus)
-            C_plus = self.lds.C.data[:, :24]  # First 24 coordinates
-            C_minus = self.lds.C.data[:, 24:] # Second 24 coordinates
+            self.M_filters = stu.M_filters.data.to(torch.float64)
 
-            self.M_filters = M_filters
-            
-            # # Apply M_filters to each part separately
-            C_plus_transformed = C_plus @ M_filters
-            C_minus_transformed = C_minus @ M_filters
-            
-            # # Concatenate the results to get shape [1149, 2*d_in]
-            self.lds.C.data = torch.cat([C_plus_transformed, C_minus_transformed], dim=1)
-            
-            # Similarly for M data
-            M_plus = self.lds.M.data[:24]     # First 24 coordinates
-            M_minus = self.lds.M.data[24:]    # Second 24 coordinates
-            
-            # Apply M_filters to each part
-            M_plus_transformed = torch.einsum('nik,nd->dik', M_plus, M_filters)
-            M_minus_transformed = torch.einsum('nik,nd->dik', M_minus, M_filters)
-            
-            # Concatenate the results
-            self.lds.M.data = torch.cat([M_plus_transformed, M_minus_transformed], dim=0)
+       
         else:
             self.M_phi_plus = nn.Parameter(
                 stu.M_phi_plus.data.to(torch.float64)
@@ -70,37 +49,32 @@ class FullFastSTU(nn.Module):
                 )
 
     def forward(self, x: torch.Tensor, input_pos: torch.Tensor) -> torch.Tensor:
-        x = x.double()
+
         if self.use_approx:
-            # Contract inputs and filters over the K and d_in dimensions, then convolve
+            x = x.double()
             x = x @ self.M_inputs
-        
-        # Convolve inputs and filters,
-        bsz = x.shape[0]
-        x_reshaped = x.permute(0, 2, 1).reshape(-1, x.shape[1], 1)  # [B*d_in, L, 1]
-
-        #NEW IDEA and we don't change the LDS
-        # if self.use_approx:
-        #     # print(self.lds(x_reshaped)).shape
-        #     U_reshaped = self.lds(x_reshaped)
-        #     U_reshaped = torch.stack([U_reshaped[:, :, :24] @ self.M_filters, U_reshaped[:, :, 24:] @ self.M_filters], dim = -1)
-        #     print("FIRST", U_reshaped.shape)# [B*d_in, L, 2 * d_in]
-            
-        # else:    
-        #     U_reshaped = self.lds(x_reshaped)  # [B*d_in, L, K]
-
-        U_reshaped = self.lds(x_reshaped)  # [B*d_in, L, K]
-        
-        U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1)
-        print("SECOND", U.shape)
-        if self.use_approx:
-            
+            bsz = x.shape[0]
+            x_reshaped = x.permute(0, 2, 1).reshape(-1, x.shape[1], 1)
+            U_reshaped = self.lds(x_reshaped)
+            U_reshaped = torch.cat([U_reshaped[:, :, :24] @ self.M_filters, U_reshaped[:, :, 24:] @ self.M_filters], dim = -1)
+            U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1)
             spectral_plus, spectral_minus = U[:,:,:self.d_out,:], U[:,:,self.d_out:,:]
             # Extract diagonal terms to convert from [bsz, s_len, n_eigh, n_eigh] to [bsz, s_len, n_eigh]
             spectral_plus = torch.diagonal(spectral_plus, dim1=2, dim2=3)
             spectral_minus = torch.diagonal(spectral_minus, dim1=2, dim2=3)
-        
+            ret = spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus
+            return ret.to(torch.bfloat16)
+            
+            
         else:
+            x = x.double()
+            # Convolve inputs and filters,
+            bsz = x.shape[0]
+            x_reshaped = x.permute(0, 2, 1).reshape(-1, x.shape[1], 1)  # [B*d_in, L, 1]
+            U_reshaped = self.lds(x_reshaped)  # [B*d_in, L, K]
+
+        
+            U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1) 
             U_plus, U_minus = U[:,:,:self.K,:], U[:,:,self.K:,:]
 
             # Then, contract over the K and d_in dimensions

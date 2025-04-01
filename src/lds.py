@@ -4,26 +4,48 @@ from torch import nn
 from lds_utils import exponential_decay_init, compute_ar_x_preds
 
 class LDS(nn.Module):
-    def __init__(self, state_dim, input_dim, output_dim, kx=10, lam=5, dtype=torch.float):
+    def __init__(
+        self, 
+        state_dim, 
+        input_dim, 
+        output_dim, 
+        kx=10, 
+        lam=5, 
+        dtype=torch.float, 
+        cache=False
+    ):
         super(LDS, self).__init__()
         self.state_dim = state_dim
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.kx = kx
         self.dtype = dtype
+        self.cache = cache
         
-        self.h0 = nn.Parameter(torch.randn(state_dim, dtype=dtype))
+        self.h0 = nn.Parameter(torch.zeros(state_dim, dtype=dtype))
     
         self.A = nn.Parameter(exponential_decay_init([state_dim], lam=lam).to(dtype))
         self.B = nn.Parameter((torch.randn(input_dim, state_dim) / input_dim).to(dtype))
         self.C = nn.Parameter((torch.randn(state_dim, output_dim) / state_dim).to(dtype))
         self.M = nn.Parameter((torch.randn(output_dim, input_dim, kx) / input_dim).to(dtype))
+        
+        # Initialize hidden state if caching is used
+        self.h = None
 
     def forward(self, inputs):
         device = inputs.device
         inputs = inputs.to(self.dtype)
         bsz, seq_len, _ = inputs.shape
-        h_t = self.h0.expand(bsz, self.state_dim).to(device)
+        
+        # Use cached hidden state if enabled and available.
+        if self.cache:
+            # If self.h is not set or the batch size has changed, initialize it.
+            if self.h is None or self.h.shape[0] != bsz:
+                self.h = self.h0.expand(bsz, self.state_dim).to(device)
+            h_t = self.h
+        else:
+            h_t = self.h0.expand(bsz, self.state_dim).to(device)
+            
         A = self.A.flatten()
         all_h_t = []
         
@@ -32,11 +54,17 @@ class LDS(nn.Module):
             h_t = A * h_t + (u_t @ self.B)
             all_h_t.append(h_t.unsqueeze(1))
         
+        # Update the maintained hidden state if caching is enabled.
+        if self.cache:
+            self.h = h_t.detach()
+            
         all_h_t = torch.cat(all_h_t, dim=1)
         lds_out = torch.matmul(all_h_t, self.C)
-        
-        ar = compute_ar_x_preds(self.M, inputs)
-        return lds_out + ar
+
+        if self.kx > 0:
+            ar = compute_ar_x_preds(self.M, inputs)
+            return lds_out + ar
+        return lds_out
 
     def compute_loss(self, inputs, targets):
         mse_loss = nn.MSELoss()
@@ -120,42 +148,3 @@ class LDS(nn.Module):
                 outputs[t,:,:] += self.M[:,:, t]
                
         return outputs
-
-
-
-# # Let's verify what compute_ar_x_preds is equivalent to
-# # We'll manually compute the autoregressive prediction and compare with the function
-
-# # Create a simple test case
-# L = 10
-# x = torch.randn(1, L, 1)  # Same x as in cell 13
-# M = torch.randn(lds_model.M.data.shape)  # Shape: [output_dim, input_dim, kx]
-
-# # Manual computation of autoregressive prediction
-# manual_ar_pred = torch.zeros(1, L, M.shape[0], device=x.device)
-# for t in range(L):
-#     for k in range(min(t+1, M.shape[2])):  # Only use available past inputs
-#         if t-k >= 0:  # Make sure we don't go out of bounds
-#             manual_ar_pred[0, t] += M[:, :, k] @ x[0, t-k]
-
-# # Using the utility function
-# ar_pred_from_function = compute_ar_x_preds(M, x)
-
-# # Compare the results
-# print("Manual computation result:")
-# print(manual_ar_pred[0, :, 0])
-# print("\nFunction computation result:")
-# print(ar_pred_from_function[0, :, 0])
-# print("\nDifference:")
-# print(torch.abs(manual_ar_pred - ar_pred_from_function).max().item())
-
-# # Verify that this is equivalent to convolution with flipped kernel
-# # For the first output dimension
-# kernel = M[0, 0].flip(dims=[0])  # Flip the kernel for convolution
-# conv_result = torch.nn.functional.conv1d(
-#     x.transpose(1, 2),  # [1, 1, L]
-#     kernel.unsqueeze(0).unsqueeze(0),  # [1, 1, kx]
-#     padding=0
-# )
-# print("\nConvolution result:")
-# print(conv_result.squeeze())
