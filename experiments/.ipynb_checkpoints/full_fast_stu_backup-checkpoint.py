@@ -29,7 +29,8 @@ class FullFastSTU(nn.Module):
             self.lds = self.get_lds(name)
         else:
             self.lds = self.get_lds()
-        
+
+        dtype = self.lds.dtype
         if self.use_approx:
             self.M_inputs = nn.Parameter(
                 stu.M_inputs.data.to(torch.float64)

@@ -8,7 +8,8 @@ import os
 sys.path.append(os.path.abspath("../../src"))
 
 # from lds import LDS
-from inference_lds import LDS
+# from inference_lds import LDS
+from nlds import NLDS as LDS
 
 class FullFastSTU(nn.Module):
     def __init__(self, stu, name = None) -> None:
@@ -30,41 +31,41 @@ class FullFastSTU(nn.Module):
         else:
             self.lds = self.get_lds()
         
+        
         if self.use_approx:
             self.M_inputs = nn.Parameter(
-                stu.M_inputs.data.to(torch.float64)
+                stu.M_inputs.data.to(self.lds.dtype)
             )
-
             # Stack the weights along the first axis to match dimensions
-            self.M_filters = stu.M_filters.data.to(torch.float64)
-
-       
+            self.M_filters = stu.M_filters.data.to(self.lds.dtype)
+                                                   
         else:
             self.M_phi_plus = nn.Parameter(
-                stu.M_phi_plus.data.to(torch.float64)
+                stu.M_phi_plus.data.to(self.lds.dtype)
             )
             if not self.use_hankel_L:
                 self.M_phi_minus = nn.Parameter(
-                    stu.M_phi_minus.data.to(torch.float64)
+                    stu.M_phi_minus.data.to(self.lds.dtype)
                 )
 
     def forward(self, x: torch.Tensor, input_pos: torch.Tensor) -> torch.Tensor:
 
         if self.use_approx:
-            x = x.double()
+            x = x.to(self.lds.dtype)
             x = x @ self.M_inputs
             
             bsz = x.shape[0]
             x_reshaped = x.permute(0, 2, 1).reshape(-1, x.shape[1], 1)
-            U_reshaped = self.lds(x_reshaped)
-            U_reshaped = torch.cat([U_reshaped[:, :, :24] @ self.M_filters, U_reshaped[:, :, 24:] @ self.M_filters], dim = -1)
+            U_reshaped = self.lds(x_reshaped) 
+            U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1) #B, L_in, D, K
             
-            U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1)
+            spectral_plus = torch.einsum('blkd,kd->bld', U[:, :, self.K:, :], self.M_filters)
+            spectral_minus =torch.einsum('blkd,kd->bld', U[:, :, :self.K, :], self.M_filters)
             
-            spectral_plus, spectral_minus = U[:,:,:self.d_out,:], U[:,:,self.d_out:,:]
-            # Extract diagonal terms to convert from [bsz, s_len, n_eigh, n_eigh] to [bsz, s_len, n_eigh]
-            spectral_plus = torch.diagonal(spectral_plus, dim1=2, dim2=3)
-            spectral_minus = torch.diagonal(spectral_minus, dim1=2, dim2=3)
+            # spectral_plus, spectral_minus = U[:,:,:self.d_out,:], U[:,:,self.d_out:,:]
+            # # Extract diagonal terms to convert from [bsz, s_len, n_eigh, n_eigh] to [bsz, s_len, n_eigh]
+            # spectral_plus = torch.diagonal(spectral_plus, dim1=2, dim2=3)
+            # spectral_minus = torch.diagonal(spectral_minus, dim1=2, dim2=3)
             ret = spectral_plus if self.use_hankel_L else spectral_plus + spectral_minus
             return ret.to(torch.bfloat16)
             
@@ -77,8 +78,8 @@ class FullFastSTU(nn.Module):
             U_reshaped = self.lds(x_reshaped)  # [B*d_in, L, K]
 
         
-            U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1) 
-            U_plus, U_minus = U[:,:,:self.K,:], U[:,:,self.K:,:]
+            U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1)  #B, D, L_in, K
+            U_plus, U_minus = U[:,:,:self.K,:], U[:,:,self.K:,:] #DOUBLE CHECK THIS
 
             # Then, contract over the K and d_in dimensions
             spectral_plus = torch.tensordot(
@@ -116,4 +117,5 @@ class FullFastSTU(nn.Module):
         
         # Load the weights from checkpoint
         lds_phi.load_state_dict(checkpoint['model_state_dict'], strict = False)
+        
         return lds_phi.cuda()
