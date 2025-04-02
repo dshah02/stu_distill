@@ -57,7 +57,7 @@ class FullFastSTU(nn.Module):
             bsz = x.shape[0]
             x_reshaped = x.permute(0, 2, 1).reshape(-1, x.shape[1], 1)
             U_reshaped = self.lds(x_reshaped) 
-            U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1) #B, L_in, D, K
+            U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1) #B, L_in, K, D
             
             spectral_plus = torch.einsum('blkd,kd->bld', U[:, :, self.K:, :], self.M_filters)
             spectral_minus =torch.einsum('blkd,kd->bld', U[:, :, :self.K, :], self.M_filters)
@@ -78,8 +78,8 @@ class FullFastSTU(nn.Module):
             U_reshaped = self.lds(x_reshaped)  # [B*d_in, L, K]
 
         
-            U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1)  #B, D, L_in, K
-            U_plus, U_minus = U[:,:,:self.K,:], U[:,:,self.K:,:] #DOUBLE CHECK THIS
+            U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1)  #B, L_in, K, D
+            U_plus, U_minus = U[:,:,:self.K,:], U[:,:,self.K:,:]
 
             # Then, contract over the K and d_in dimensions
             spectral_plus = torch.tensordot(
