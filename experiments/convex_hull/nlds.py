@@ -56,12 +56,11 @@ class NLDS(nn.Module):
           3) Update the AR buffer and compute AR output in one optimized step if kx > 0.
         Returns final_out: shape [bsz, output_dim].
         """
-        # Compute LDS update and output in one step
         self.h = self.h * self.A + x_t.matmul(self.B)
         lds_out = self.h.matmul(self.C)
-        
         return lds_out
-    
+        
+    @torch.compile
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Forward pass for the LDS model.
@@ -72,14 +71,18 @@ class NLDS(nn.Module):
         Returns:
             torch.Tensor: Output tensor of shape [batch_size, seq_len, output_dim].
         """
-        
         batch_size, seq_len, _ = inputs.size()
         # Reset the hidden state and AR buffer for a new sequence.
         if not self.cache:
             self.reset_state(batch_size)
+        if seq_len == 1:
+            y_t = self.next_step(inputs.squeeze(1))
+            return y_t.unsqueeze(1)  # shape => [batch_size, 1, output_dim]
         outputs = []
         for t in range(seq_len):
             x_t = inputs[:, t, :]
             y_t = self.next_step(x_t)
             outputs.append(y_t.unsqueeze(1))
         return torch.cat(outputs, dim=1)
+
+
