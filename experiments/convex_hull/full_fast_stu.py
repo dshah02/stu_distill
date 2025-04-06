@@ -47,25 +47,23 @@ class FullFastSTU(nn.Module):
     @torch.compile
     def forward(self, x: torch.Tensor, input_pos: torch.Tensor) -> torch.Tensor:
         if self.use_approx:
-            x = x.to(self.lds.dtype) @ self.M_inputs
+            x = x.to(self.lds.dtype) @ self.M_inputs  # [B, L, d_in] => [B, L, K_total]
             
-            bsz = x.shape[0]
-            # Reshape to [B*d_in, L, 1]
-            x_reshaped = x.permute(0, 2, 1).reshape(-1, x.shape[1], 1)
-            U_reshaped = self.lds(x_reshaped)
-            # Reshape U to [B, L, K_total, d_in]
-            U = U_reshaped.reshape(bsz, x.shape[2], x.shape[1], -1).permute(0, 2, 3, 1)
+            bsz, seq_len, d_in = x.shape
+            # Flatten (B * d_in, seq_len, 1)
+            x_reshaped = x.transpose(1, 2)  # [B, d_in, L]
+            x_reshaped = x_reshaped.reshape(bsz * d_in, seq_len, 1)
+
+            U_reshaped = self.lds(x_reshaped)  # [B*d_in, seq_len, state_dim]
             
-            # Option 1: Use original einsum (unmodified)
-            # spectral_plus = torch.einsum('blkd,kd->bld', U[:, :, self.K:, :], self.M_filters)
-            # spectral_minus = torch.einsum('blkd,kd->bld', U[:, :, :self.K, :], self.M_filters)
+            # Reshape back to [B, seq_len, state_dim, d_in]
+            U = U_reshaped.view(bsz, d_in, seq_len, -1)  # [B, d_in, L, state_dim]
+            U = U.permute(0, 2, 3, 1).contiguous()       # [B, L, state_dim, d_in]
             
-            # Option 2: Use broadcast & sum instead (should be equivalent)
             spectral_plus = (U[:, :, self.K:, :] * self.M_filters[None, None, :, :]).sum(dim=2)
             spectral_minus = (U[:, :, :self.K, :] * self.M_filters[None, None, :, :]).sum(dim=2)
             
             ret = spectral_plus if self.use_hankel_L else (spectral_plus + spectral_minus)
-            # Return in bfloat16 (as originally)
             return ret.to(torch.bfloat16)
         else:
             x = x.double()

@@ -46,8 +46,6 @@ class NLDS(nn.Module):
         device = self.A.device
         self.h = self.h0.unsqueeze(0).expand(batch_size, -1).clone().to(device)
         
-
-    @torch.compile
     def next_step(self, x_t: torch.Tensor) -> torch.Tensor:
         """
         Optimized single-step update:
